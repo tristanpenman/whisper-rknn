@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -182,12 +181,6 @@ cleanup:
     result = releaseWhisperModel(&appContext.decoderContext);
     if (result != 0) {
         std::printf("Failed to release Whisper decoder: result=%d\n", result);
-    }
-
-    std::free(audio.data);
-    for (auto& entry : vocab) {
-        std::free(entry.token);
-        entry.token = nullptr;
     }
 
     return 0;

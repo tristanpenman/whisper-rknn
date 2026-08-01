@@ -1,8 +1,9 @@
 #include "audio_utils.h"
 
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include <cmath>
+#include <cstdio>
+#include <utility>
+#include <vector>
 
 #include <sndfile.h>
 
@@ -18,22 +19,16 @@ int readAudio(const char* path, AudioBuffer* audio)
     audio->numFrames = fileInfo.frames;
     audio->numChannels = fileInfo.channels;
     audio->sampleRate = fileInfo.samplerate;
-    audio->data = (float*)malloc(audio->numFrames * audio->numChannels * sizeof(float));
-    if (audio->data == NULL) {
-        fprintf(stderr, "Error: failed to allocate memory.\n");
-        sf_close(inputFile);
-        return -1;
-    }
+    audio->data.resize(audio->numFrames * audio->numChannels);
 
-    const sf_count_t numReadFrames = sf_readf_float(inputFile, audio->data, audio->numFrames);
+    const sf_count_t numReadFrames = sf_readf_float(inputFile, audio->data.data(), audio->numFrames);
     if (numReadFrames != audio->numFrames) {
         fprintf(
             stderr,
             "Error: failed to read all frames. Expected %ld, got %ld.\n",
             (long)audio->numFrames,
             (long)numReadFrames);
-        free(audio->data);
-        audio->data = NULL;
+        audio->data.clear();
         sf_close(inputFile);
         return -1;
     }
@@ -79,25 +74,21 @@ int saveAudio(
 int resampleAudio(AudioBuffer* audio, int originalSampleRate, int desiredSampleRate)
 {
     const int originalLength = audio->numFrames;
-    const int outputLength = round(originalLength * (double)desiredSampleRate / (double)originalSampleRate);
+    const int outputLength = std::round(originalLength * (double)desiredSampleRate / (double)originalSampleRate);
     printf("resampleAudio: %d Hz -> %d Hz\n", originalSampleRate, desiredSampleRate);
 
-    float* resampledData = (float*)malloc(outputLength * sizeof(float));
-    if (resampledData == NULL) {
-        return -1;
-    }
+    std::vector<float> resampledData(outputLength);
 
     for (int i = 0; i < outputLength; ++i) {
         const double sourceIndex = i * (double)originalSampleRate / (double)desiredSampleRate;
-        const int leftIndex = (int)floor(sourceIndex);
+        const int leftIndex = static_cast<int>(std::floor(sourceIndex));
         const int rightIndex = leftIndex + 1 < originalLength ? leftIndex + 1 : leftIndex;
         const double fraction = sourceIndex - leftIndex;
         resampledData[i] = (1.0f - fraction) * audio->data[leftIndex] + fraction * audio->data[rightIndex];
     }
 
     audio->numFrames = outputLength;
-    free(audio->data);
-    audio->data = resampledData;
+    audio->data = std::move(resampledData);
     return 0;
 }
 
@@ -105,10 +96,7 @@ int convertChannels(AudioBuffer* audio)
 {
     printf("convertChannels: %d -> 1\n", audio->numChannels);
 
-    float* convertedData = (float*)malloc(audio->numFrames * sizeof(float));
-    if (convertedData == NULL) {
-        return -1;
-    }
+    std::vector<float> convertedData(audio->numFrames);
 
     for (int i = 0; i < audio->numFrames; ++i) {
         const float left = audio->data[i * 2];
@@ -117,7 +105,6 @@ int convertChannels(AudioBuffer* audio)
     }
 
     audio->numChannels = 1;
-    free(audio->data);
-    audio->data = convertedData;
+    audio->data = std::move(convertedData);
     return 0;
 }

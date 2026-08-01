@@ -110,11 +110,12 @@ set(LIBFFTW ${LIBFFTW_PATH}/${CMAKE_SYSTEM_NAME}/${WHISPER_RKNN_ARCH}/libfftw3f.
 # -----------------------------------------------------------------------------
 
 add_executable(whisper_rknn
-    cpp/src/audio_utils.c
+    cpp/src/audio_utils.cc
     cpp/src/file_utils.cc
     cpp/src/logger.cc
     cpp/src/main.cc
     cpp/src/process.cc
+    cpp/src/rknn_utils.cc
     cpp/src/whisper.cc
 )
 

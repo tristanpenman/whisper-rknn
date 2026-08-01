@@ -397,7 +397,7 @@ void preprocessAudio(
     std::vector<float>& melSpectrogram)
 {
     const int audioLength = audio->numFrames;
-    std::vector<float> originalAudioData(audio->data, audio->data + audioLength);
+    std::vector<float> originalAudioData(audio->data.begin(), audio->data.begin() + audioLength);
 
     if (audioLength >= kMaxAudioLength) {
         std::vector<float> trimmedAudioData(kMaxAudioLength);
@@ -446,7 +446,7 @@ int readVocab(const char* fileName, VocabEntry* vocab)
     int count = 0;
     while (std::fgets(line, sizeof(line), file) != nullptr) {
         // The vocabulary format is an integer index followed by a token.
-        vocab[count].token = strdup(std::strchr(line, ' ') + 1);
+        vocab[count].token = std::strchr(line, ' ') + 1;
         vocab[count].index = std::atoi(line);
         ++count;
     }

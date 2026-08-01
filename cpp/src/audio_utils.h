@@ -1,15 +1,13 @@
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include <vector>
 
 typedef struct AudioBuffer
 {
-    float* data;
-    int numFrames;
-    int numChannels;
-    int sampleRate;
+    std::vector<float> data;
+    int numFrames = 0;
+    int numChannels = 0;
+    int sampleRate = 0;
 } AudioBuffer;
 
 /** Reads an audio file into a buffer. */
@@ -28,7 +26,3 @@ int resampleAudio(AudioBuffer* audio, int originalSampleRate, int desiredSampleR
 
 /** Converts two-channel audio to mono by averaging both channels. */
 int convertChannels(AudioBuffer* audio);
-
-#ifdef __cplusplus
-}  // extern "C"
-#endif

@@ -15,8 +15,8 @@
 #include "file_utils.h"
 
 #include <cstdio>
-#include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
@@ -39,27 +39,22 @@ std::string joinPath(const std::string& dir, const char* name)
     return dir + "/" + name;
 }
 
-long readDataFromFile(const char* path, char** outData)
+std::string readDataFromFile(const char* path)
 {
-    FILE* fp = fopen(path, "rb");
-    if (fp == nullptr) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
         LOG(ERROR) << "Failed to open file: " << path;
-        return -1;
+        return {};
     }
-    fseek(fp, 0, SEEK_END);
-    const long fileSize = ftell(fp);
-    char* data = static_cast<char*>(malloc(fileSize + 1));
-    data[fileSize] = 0;
-    fseek(fp, 0, SEEK_SET);
-    if (fileSize != fread(data, 1, fileSize, fp)) {
+
+    std::string data{
+        std::istreambuf_iterator<char>(file),
+        std::istreambuf_iterator<char>()};
+    if (!file.eof()) {
         LOG(ERROR) << "Failed to read file: " << path;
-        free(data);
-        fclose(fp);
-        return -1;
+        return {};
     }
-    fclose(fp);
-    *outData = data;
-    return fileSize;
+    return data;
 }
 
 int readFp32FromFile(const char* path, int len, float* data)

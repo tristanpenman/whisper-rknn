@@ -14,11 +14,13 @@
 
 #include "whisper.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "rknn_utils.h"
@@ -41,9 +43,9 @@ int runEncoder(
 
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_FLOAT32;
-    inputs[0].size = kNumMels * kEncoderInputSize * sizeof(float);
-    inputs[0].buf = std::malloc(inputs[0].size);
-    std::memcpy(inputs[0].buf, audioData.data(), inputs[0].size);
+    std::vector<float> inputData(audioData.begin(), audioData.begin() + kNumMels * kEncoderInputSize);
+    inputs[0].size = inputData.size() * sizeof(float);
+    inputs[0].buf = inputData.data();
 
     int result = rknn_inputs_set(appContext->rknnContext, 1, inputs);
     if (result < 0) {
@@ -68,7 +70,6 @@ int runEncoder(
 
 cleanup:
     rknn_outputs_release(appContext->rknnContext, 1, outputs);
-    std::free(inputs[0].buf);
     return result;
 }
 
@@ -84,14 +85,15 @@ int runDecoder(
 
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_INT64;
-    inputs[0].size = kMaxTokens * sizeof(std::int64_t);
-    inputs[0].buf = std::malloc(inputs[0].size);
+    std::array<std::int64_t, kMaxTokens> tokenInput{};
+    inputs[0].size = tokenInput.size() * sizeof(std::int64_t);
+    inputs[0].buf = tokenInput.data();
 
     inputs[1].index = 1;
     inputs[1].type = RKNN_TENSOR_FLOAT32;
-    inputs[1].size = kDecoderInputSize * sizeof(float);
-    inputs[1].buf = std::malloc(inputs[1].size);
-    std::memcpy(inputs[1].buf, encoderOutput, inputs[1].size);
+    std::vector<float> encoderInput(encoderOutput, encoderOutput + kDecoderInputSize);
+    inputs[1].size = encoderInput.size() * sizeof(float);
+    inputs[1].buf = encoderInput.data();
 
     std::int64_t tokens[kMaxTokens + 1] = {
         kStartOfTranscriptToken,
@@ -111,7 +113,7 @@ int runDecoder(
     int result = 0;
     while (nextToken != kEndOfTextToken && iterationCount < kMaximumDecodeIterations) {
         ++iterationCount;
-        std::memcpy(inputs[0].buf, tokens, inputs[0].size);
+        std::copy_n(tokens, kMaxTokens, tokenInput.begin());
 
         result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
         if (result < 0) {
@@ -162,8 +164,6 @@ int runDecoder(
     }
 
 cleanup:
-    std::free(inputs[0].buf);
-    std::free(inputs[1].buf);
     return result;
 }
 
@@ -224,27 +224,15 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
 
     appContext->rknnContext = context;
     appContext->ioCount = ioCount;
-    appContext->inputAttributes = static_cast<rknn_tensor_attr*>(
-        std::malloc(ioCount.n_input * sizeof(rknn_tensor_attr)));
-    std::memcpy(
-        appContext->inputAttributes,
-        inputAttributes.data(),
-        ioCount.n_input * sizeof(rknn_tensor_attr));
-    appContext->outputAttributes = static_cast<rknn_tensor_attr*>(
-        std::malloc(ioCount.n_output * sizeof(rknn_tensor_attr)));
-    std::memcpy(
-        appContext->outputAttributes,
-        outputAttributes.data(),
-        ioCount.n_output * sizeof(rknn_tensor_attr));
+    appContext->inputAttributes = std::move(inputAttributes);
+    appContext->outputAttributes = std::move(outputAttributes);
     return 0;
 }
 
 int releaseWhisperModel(RknnAppContext* appContext)
 {
-    std::free(appContext->inputAttributes);
-    appContext->inputAttributes = nullptr;
-    std::free(appContext->outputAttributes);
-    appContext->outputAttributes = nullptr;
+    appContext->inputAttributes.clear();
+    appContext->outputAttributes.clear();
 
     if (appContext->rknnContext != 0) {
         rknn_destroy(appContext->rknnContext);
@@ -260,20 +248,18 @@ int runWhisperInference(
     int taskCode,
     std::vector<std::string>& recognizedText)
 {
-    auto* encoderOutput = static_cast<float*>(
-        std::malloc(kEncoderOutputSize * sizeof(float)));
+    std::vector<float> encoderOutput(kEncoderOutputSize);
     recognizedText.clear();
 
-    int result = runEncoder(&appContext->encoderContext, audioData, encoderOutput);
+    int result = runEncoder(&appContext->encoderContext, audioData, encoderOutput.data());
     if (result != 0) {
         std::printf("Encoder inference failed: %d\n", result);
-        std::free(encoderOutput);
         return result;
     }
 
     result = runDecoder(
         &appContext->decoderContext,
-        encoderOutput,
+        encoderOutput.data(),
         vocab,
         taskCode,
         recognizedText);
@@ -281,6 +267,5 @@ int runWhisperInference(
         std::printf("Decoder inference failed: %d\n", result);
     }
 
-    std::free(encoderOutput);
     return result;
 }

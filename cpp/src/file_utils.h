@@ -19,7 +19,7 @@
 
 std::string joinPath(const std::string& dir, const char* name);
 
-long readDataFromFile(const char* path, char** outData);
+std::string readDataFromFile(const char* path);
 
 int readFp32FromFile(const char* path, int len, float* outData);
 

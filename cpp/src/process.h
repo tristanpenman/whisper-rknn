@@ -22,7 +22,7 @@ inline constexpr char kMelFiltersPath[] = "./model/mel_80_filters.txt";
 struct VocabEntry
 {
     int index = 0;
-    char* token = nullptr;
+    std::string token;
 };
 
 void replaceSubstring(std::string& value, const std::string& from, const std::string& to);

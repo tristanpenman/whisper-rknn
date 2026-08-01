@@ -25,8 +25,8 @@ struct RknnAppContext
 {
     rknn_context rknnContext = 0;
     rknn_input_output_num ioCount{};
-    rknn_tensor_attr* inputAttributes = nullptr;
-    rknn_tensor_attr* outputAttributes = nullptr;
+    std::vector<rknn_tensor_attr> inputAttributes;
+    std::vector<rknn_tensor_attr> outputAttributes;
 };
 
 struct RknnWhisperContext
