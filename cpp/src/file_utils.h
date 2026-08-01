@@ -1,48 +1,26 @@
-#ifndef _RKNN_MODEL_ZOO_FILE_UTILS_H_
-#define _RKNN_MODEL_ZOO_FILE_UTILS_H_
+// Copyright (c) 2026 Tristan Penman
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#pragma once
 
-/**
- * @brief Read data from file
- * 
- * @param path [in] File path
- * @param out_data [out] Read data
- * @return int -1: error; > 0: Read data size
- */
-int read_data_from_file(const char *path, char **out_data);
+#include <string>
+#include <unordered_map>
 
-/**
- * @brief Write data to file
- * 
- * @param path [in] File path
- * @param data [in] Write data
- * @param size [in] Write data size
- * @return int 0: success; -1: error
- */
-int write_data_to_file(const char *path, const char *data, unsigned int size);
+std::string joinPath(const std::string& dir, const char* name);
 
-/**
- * @brief Read all lines from text file
- * 
- * @param path [in] File path
- * @param line_count [out] File line count
- * @return char** String array of all lines, remeber call free_lines() to release after used
- */
-char** read_lines_from_file(const char* path, int* line_count);
+long readDataFromFile(const char* path, char** outData);
 
-/**
- * @brief Free lines string array
- * 
- * @param lines [in] String array
- * @param line_count [in] Line count
- */
-void free_lines(char** lines, int line_count);
+int readFp32FromFile(const char* path, int len, float* outData);
 
-#ifdef __cplusplus
-}  // extern "C"
-#endif
-
-#endif //_RKNN_MODEL_ZOO_FILE_UTILS_H_
+void readMapFromFile(const std::string& path, std::unordered_map<std::string, int>& outData);

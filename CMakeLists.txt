@@ -80,6 +80,16 @@ if(NOT EXISTS ${RKNN_INCLUDE_DIR}/rknn_api.h)
 endif()
 
 # -----------------------------------------------------------------------------
+# JSON for Modern C++
+# -----------------------------------------------------------------------------
+
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.12.0
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# -----------------------------------------------------------------------------
 # libsndfile
 # -----------------------------------------------------------------------------
 
@@ -101,7 +111,7 @@ set(LIBFFTW ${LIBFFTW_PATH}/${CMAKE_SYSTEM_NAME}/${WHISPER_RKNN_ARCH}/libfftw3f.
 
 add_executable(whisper_rknn
     cpp/src/audio_utils.c
-    cpp/src/file_utils.c
+    cpp/src/file_utils.cc
     cpp/src/logger.cc
     cpp/src/main.cc
     cpp/src/process.cc
@@ -120,6 +130,7 @@ target_link_libraries(whisper_rknn
     ${RKNN_RUNTIME_LIB}
     ${LIBFFTW}
     ${LIBSNDFILE}
+    nlohmann_json::nlohmann_json
 )
 
 if(WHISPER_RKNN_ENABLE_OPENCV)
@@ -148,3 +159,41 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     find_package(Threads REQUIRED)
     target_link_libraries(whisper_rknn Threads::Threads)
 endif()
+
+# -----------------------------------------------------------------------------
+# Tests
+# -----------------------------------------------------------------------------
+
+include(CTest)
+
+if(BUILD_TESTING AND NOT ANDROID)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.17.0
+    )
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(whisper_rknn_tests
+        cpp/src/file_utils.cc
+        cpp/src/logger.cc
+        cpp/tests/file_utils_test.cc
+    )
+
+    target_link_libraries(whisper_rknn_tests PRIVATE
+        GTest::gtest_main
+        nlohmann_json::nlohmann_json
+    )
+
+    target_include_directories(whisper_rknn_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/cpp/src
+    )
+endif()
+
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Generator: ${CMAKE_GENERATOR} (multi-config: ${is_multi_config})")
+message(STATUS "Target: ${WHISPER_RKNN_ARCH}")
+message(STATUS "RKNN runtime: ${RKNN_RUNTIME_LIB}")
