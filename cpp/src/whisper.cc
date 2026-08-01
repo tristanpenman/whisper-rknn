@@ -21,6 +21,8 @@
 #include <string>
 #include <vector>
 
+#include "rknn_utils.h"
+
 namespace {
 
 constexpr int kStartOfTranscriptToken = 50258;
@@ -28,45 +30,6 @@ constexpr int kEndOfTextToken = 50257;
 constexpr int kTimestampBeginToken = 50364;
 constexpr int kChineseTaskToken = 50260;
 constexpr int kMaximumDecodeIterations = 1000;
-
-void dumpTensorAttribute(const rknn_tensor_attr* attribute)
-{
-    char dimensions[100] = {};
-    char previousDimensions[100] = {};
-    for (std::uint32_t i = 0; i < attribute->n_dims; ++i) {
-        std::strcpy(previousDimensions, dimensions);
-        if (i == attribute->n_dims - 1) {
-            std::snprintf(
-                dimensions,
-                sizeof(dimensions),
-                "%s%d",
-                previousDimensions,
-                attribute->dims[i]);
-        } else {
-            std::snprintf(
-                dimensions,
-                sizeof(dimensions),
-                "%s%d, ",
-                previousDimensions,
-                attribute->dims[i]);
-        }
-    }
-
-    std::printf(
-        "  index=%d, name=%s, n_dims=%d, dims=[%s], n_elems=%d, size=%d, "
-        "fmt=%s, type=%s, qnt_type=%s, zp=%d, scale=%f\n",
-        attribute->index,
-        attribute->name,
-        attribute->n_dims,
-        dimensions,
-        attribute->n_elems,
-        attribute->size,
-        get_format_string(attribute->fmt),
-        get_type_string(attribute->type),
-        get_qnt_type_string(attribute->qnt_type),
-        attribute->zp,
-        attribute->scale);
-}
 
 int runEncoder(
     RknnAppContext* appContext,
@@ -84,20 +47,20 @@ int runEncoder(
 
     int result = rknn_inputs_set(appContext->rknnContext, 1, inputs);
     if (result < 0) {
-        std::printf("rknn_inputs_set failed: %d\n", result);
+        std::printf("rknn_inputs_set failed: %s\n", rknn_utils::rknnErrorMessage(result));
         goto cleanup;
     }
 
     result = rknn_run(appContext->rknnContext, nullptr);
     if (result < 0) {
-        std::printf("rknn_run failed: %d\n", result);
+        std::printf("rknn_run failed: %s\n", rknn_utils::rknnErrorMessage(result));
         goto cleanup;
     }
 
     outputs[0].want_float = 1;
     result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
     if (result < 0) {
-        std::printf("rknn_outputs_get failed: %d\n", result);
+        std::printf("rknn_outputs_get failed: %s\n", rknn_utils::rknnErrorMessage(result));
         goto cleanup;
     }
 
@@ -152,20 +115,20 @@ int runDecoder(
 
         result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
         if (result < 0) {
-            std::printf("rknn_inputs_set failed: %d\n", result);
+            std::printf("rknn_inputs_set failed: %s\n", rknn_utils::rknnErrorMessage(result));
             goto cleanup;
         }
 
         result = rknn_run(appContext->rknnContext, nullptr);
         if (result < 0) {
-            std::printf("rknn_run failed: %d\n", result);
+            std::printf("rknn_run failed: %s\n", rknn_utils::rknnErrorMessage(result));
             goto cleanup;
         }
 
         outputs[0].want_float = 1;
         result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
         if (result < 0) {
-            std::printf("rknn_outputs_get failed: %d\n", result);
+            std::printf("rknn_outputs_get failed: %s\n", rknn_utils::rknnErrorMessage(result));
             goto cleanup;
         }
 
@@ -211,17 +174,18 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
     rknn_context context = 0;
     int result = rknn_init(&context, const_cast<char*>(modelPath), 0, 0, nullptr);
     if (result < 0) {
-        std::printf("rknn_init failed: %d\n", result);
+        std::printf("rknn_init failed: %s\n", rknn_utils::rknnErrorMessage(result));
         return -1;
     }
 
     rknn_input_output_num ioCount = {};
     result = rknn_query(context, RKNN_QUERY_IN_OUT_NUM, &ioCount, sizeof(ioCount));
     if (result != RKNN_SUCC) {
-        std::printf("rknn_query failed: %d\n", result);
+        std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
         rknn_destroy(context);
         return -1;
     }
+    rknn_utils::logRknnVersion(context);
     std::printf("model input count: %d, output count: %d\n", ioCount.n_input, ioCount.n_output);
 
     std::vector<rknn_tensor_attr> inputAttributes(ioCount.n_input);
@@ -234,11 +198,11 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
             &inputAttributes[i],
             sizeof(rknn_tensor_attr));
         if (result != RKNN_SUCC) {
-            std::printf("rknn_query failed: %d\n", result);
+            std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
             rknn_destroy(context);
             return -1;
         }
-        dumpTensorAttribute(&inputAttributes[i]);
+        std::printf("  %s\n", rknn_utils::tensorAttrToString(inputAttributes[i]).c_str());
     }
 
     std::vector<rknn_tensor_attr> outputAttributes(ioCount.n_output);
@@ -251,11 +215,11 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
             &outputAttributes[i],
             sizeof(rknn_tensor_attr));
         if (result != RKNN_SUCC) {
-            std::printf("rknn_query failed: %d\n", result);
+            std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
             rknn_destroy(context);
             return -1;
         }
-        dumpTensorAttribute(&outputAttributes[i]);
+        std::printf("  %s\n", rknn_utils::tensorAttrToString(outputAttributes[i]).c_str());
     }
 
     appContext->rknnContext = context;
