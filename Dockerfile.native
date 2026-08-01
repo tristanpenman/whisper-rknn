@@ -1,0 +1,31 @@
+# check=skip=FromPlatformFlagConstDisallowed
+
+FROM --platform=linux/amd64 debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cmake \
+        curl \
+        g++ \
+        gcc \
+        git \
+        make \
+        ninja-build \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cross compiler for Linux deployments on RK3588/RK3576 class aarch64 boards.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        crossbuild-essential-arm64 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CC=aarch64-linux-gnu-gcc
+ENV CXX=aarch64-linux-gnu-g++
+
+WORKDIR /workspace
+
+CMD ["/bin/bash"]

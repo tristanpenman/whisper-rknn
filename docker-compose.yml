@@ -1,0 +1,16 @@
+services:
+  android:
+    build:
+      context: .
+      dockerfile: Dockerfile.android
+    platform: linux/amd64
+    volumes:
+      - .:/workspace
+
+  native:
+    build:
+      context: .
+      dockerfile: Dockerfile.native
+    platform: linux/amd64
+    volumes:
+      - .:/workspace
