@@ -1,0 +1,73 @@
+name: Build C++ Binaries
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - cpp/**
+      - thirdparty/**
+      - CMakeLists.txt
+      - scripts/**
+      - Dockerfile.android
+      - Dockerfile.native
+      - .github/workflows/build.yml
+  pull_request:
+    paths:
+      - cpp/**
+      - thirdparty/**
+      - CMakeLists.txt
+      - scripts/**
+      - Dockerfile.android
+      - Dockerfile.native
+      - .github/workflows/build.yml
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Android container
+        run: |
+          docker build -t whisper-rknn-android -f Dockerfile.android .
+
+      - name: Build Android binary
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            whisper-rknn-android \
+            bash -c "scripts/build-android.sh"
+
+      - name: Upload Android whisper_rknn binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-rknn-android-arm64-v8a
+          path: build-android/bin/whisper_rknn
+          if-no-files-found: error
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build container
+        run: |
+          docker build -t whisper-rknn-native -f Dockerfile.native .
+
+      - name: Configure and build
+        run: |
+          docker run --rm \
+            -v "$PWD":/workspace \
+            whisper-rknn-native \
+            bash -c "scripts/build-native.sh"
+
+      - name: Upload whisper_rknn binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-rknn-linux-aarch64
+          path: build-native/bin/whisper_rknn
+          if-no-files-found: error
