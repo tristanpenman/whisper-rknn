@@ -97,7 +97,7 @@ namespace example {
 - Use `std::unique_ptr` for exclusive ownership and `std::shared_ptr` only for genuine shared ownership.
 - Pass smart pointers by value when transferring or sharing ownership. Do not use a smart pointer merely to express non-owning access.
 - Prefer constructor injection when an object requires a dependency for its valid lifetime.
-- Mark read-only methods `const` and use `const` for values that do not change.
+- Mark read-only methods `const` and use `const` for values that do not change, including function parameters.
 - Use `auto` when the type is obvious from the initializer or when spelling the type would obscure the intent. Avoid it when the concrete type conveys important ownership, precision, or conversion information.
 - Initialise members at their declarations when the same default applies to every constructor.
 - Use scoped enums (`enum class`) unless implicit conversion or compatibility with an existing interface is required.
@@ -107,8 +107,43 @@ namespace example {
 - Write comments that explain intent, constraints, or non-obvious behaviour rather than restating the code.
 - Use sentence case and punctuation for prose comments.
 - Avoid full stops for short annotations and non-prose comments.
+- Avoid modifying the use of full stop in existing comments, unless the comment is clearly a sentence.
 - Documentation comments are appropriate for public types and APIs whose contract is not evident from the declaration.
 - Section comments may be used to make a long file easier to navigate, but should not compensate for an overly large class or function.
+
+### Templates
+
+- Use templates where it avoids duplication, but do not introduce unnecessarily complex template metaprogramming.
+- No space between `template` and `<`, unless that is the style of the surrounding code.
+- Avoid adding a space between adjacent `>`, unless that is the style of the surrounding code.
+- Prefer `typename` over `class` in template parameters.
+- Use short (even single letter) parameter names when usage is unambiguous, e.g. `T` and `U`
+- Use PascalCase for longer parameter names.
+- Very long template parameter lists may be split across multiple lines. However this may mean template class or function is too complicated.
+
+```cpp
+template<typename T>
+T addTwoNumbers(T left, T right)
+{
+    return left + right;
+}
+
+template<typename T, typename Allocator>
+class SomeContainer
+{
+    ...
+};
+
+template<
+    typename T1,
+    typename T2,
+    typename T3,
+    typename T4>
+class SuperComplicatedContainer
+{
+    ...
+};
+```
 
 ### Example
 
