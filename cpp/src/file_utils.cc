@@ -14,8 +14,8 @@
 
 #include "file_utils.h"
 
-#include <cstdlib>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -69,9 +69,9 @@ int readFp32FromFile(const char* path, int len, float* data)
         LOG(ERROR) << "Failed to open file: " << path;
         return -1;
     }
-    const size_t readLen = fread(data, sizeof(float), len, fp);
+    const std::size_t readLen = fread(data, sizeof(float), len, fp);
     fclose(fp);
-    if (readLen != static_cast<size_t>(len)) {
+    if (readLen != static_cast<std::size_t>(len)) {
         LOG(ERROR) << "Failed to read file: " << path;
         return -1;
     }

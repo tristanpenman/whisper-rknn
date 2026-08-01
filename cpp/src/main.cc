@@ -12,189 +12,182 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "whisper.h"
-#include "audio_utils.h"
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
-#include <vector>
 #include <string>
+#include <vector>
 
-const char *enVocabPath = "./model/vocab_en.txt";
-const char *zhVocabPath = "./model/vocab_zh.txt";
+#include "audio_utils.h"
+#include "easy_timer.h"
+#include "process.h"
+#include "whisper.h"
 
-int main(int argc, char **argv)
+namespace {
+
+constexpr char kEnglishVocabPath[] = "./model/vocab_en.txt";
+constexpr char kChineseVocabPath[] = "./model/vocab_zh.txt";
+constexpr int kEnglishTaskCode = 50259;
+constexpr int kChineseTaskCode = 50260;
+
+}  // namespace
+
+int main(int argc, char** argv)
 {
-    if (argc != 5)
-    {
-        printf("%s <encoder_path> <decoder_path> <task> <audio_path>\n", argv[0]);
+    if (argc != 5) {
+        std::printf("%s <encoder_path> <decoder_path> <task> <audio_path>\n", argv[0]);
         return -1;
     }
 
-    const char *encoder_path = argv[1];
-    const char *decoder_path = argv[2];
-    const char *task = argv[3];
-    const char *audio_path = argv[4];
-    const char *vocab_path = "";
-    int task_code = 0;
+    const char* encoderPath = argv[1];
+    const char* decoderPath = argv[2];
+    const char* task = argv[3];
+    const char* audioPath = argv[4];
+    const char* vocabPath = nullptr;
+    int taskCode = 0;
 
-    if (strcmp(task, "en") == 0)
-    {
-        vocab_path = enVocabPath;
-        task_code = 50259;
-    }
-    else if (strcmp(task, "zh") == 0)
-    {
-        vocab_path = zhVocabPath;
-        task_code = 50260;
-    }
-    else
-    {
-        printf("\n\033[1;33mCurrently only English or Chinese recognition tasks are supported. Please specify <task> as en or zh\033[0m\n");
+    if (std::strcmp(task, "en") == 0) {
+        vocabPath = kEnglishVocabPath;
+        taskCode = kEnglishTaskCode;
+    } else if (std::strcmp(task, "zh") == 0) {
+        vocabPath = kChineseVocabPath;
+        taskCode = kChineseTaskCode;
+    } else {
+        std::printf(
+            "\n\033[1;33mCurrently only English or Chinese recognition tasks are supported. "
+            "Please specify <task> as en or zh.\033[0m\n");
         return -1;
     }
 
-    int ret;
+    int result = 0;
     EasyTimer timer;
-    float infer_time = 0.0;
-    float audio_length = 0.0;
-    float rtf = 0.0;
-    rknn_whisper_context_t rknn_app_ctx;
-    std::vector<float> audio_data(N_MELS * MAX_AUDIO_LENGTH / HOP_LENGTH, 0.0f);
-    std::vector<std::string> recognized_text;
-    float *mel_filters = (float *)malloc(N_MELS * MELS_FILTERS_SIZE * sizeof(float));
-    VocabEntry vocab[VOCAB_NUM];
-    audio_buffer_t audio;
-
-    memset(&rknn_app_ctx, 0, sizeof(rknn_whisper_context_t));
-    memset(vocab, 0, sizeof(vocab));
-    memset(&audio, 0, sizeof(audio_buffer_t));
+    RknnWhisperContext appContext;
+    std::vector<float> audioData(kNumMels * kMaxAudioLength / kHopLength, 0.0f);
+    std::vector<float> melFilters(kNumMels * kMelFilterSize);
+    std::vector<VocabEntry> vocab(kVocabSize);
+    std::vector<std::string> recognizedText;
+    AudioBuffer audio = {};
 
     timer.tik();
-    ret = read_audio(audio_path, &audio);
-    if (ret != 0)
-    {
-        printf("read audio fail! ret=%d audio_path=%s\n", ret, audio_path);
-        goto out;
+    result = readAudio(audioPath, &audio);
+    if (result != 0) {
+        std::printf("Failed to read audio: result=%d, path=%s\n", result, audioPath);
+        goto cleanup;
     }
 
-    if (audio.num_channels == 2)
-    {
-        ret = convert_channels(&audio);
-        if (ret != 0)
-        {
-            printf("convert channels fail! ret=%d\n", ret, audio_path);
-            goto out;
+    if (audio.numChannels == 2) {
+        result = convertChannels(&audio);
+        if (result != 0) {
+            std::printf("Failed to convert audio channels: result=%d\n", result);
+            goto cleanup;
         }
     }
 
-    if (audio.sample_rate != SAMPLE_RATE)
-    {
-        ret = resample_audio(&audio, audio.sample_rate, SAMPLE_RATE);
-        if (ret != 0)
-        {
-            printf("resample audio fail! ret=%d\n", ret, audio_path);
-            goto out;
+    if (audio.sampleRate != kSampleRate) {
+        result = resampleAudio(&audio, audio.sampleRate, kSampleRate);
+        if (result != 0) {
+            std::printf("Failed to resample audio: result=%d\n", result);
+            goto cleanup;
         }
     }
     timer.tok();
-    timer.printTime("read_audio & convert_channels & resample_audio");
+    timer.printTime("Read and normalize audio");
 
     timer.tik();
-    ret = read_mel_filters(MEL_FILTERS_PATH, mel_filters, N_MELS * MELS_FILTERS_SIZE);
-    if (ret != 0)
-    {
-        printf("read mel_filters fail! ret=%d mel_filters_path=%s\n", ret, MEL_FILTERS_PATH);
-        goto out;
+    result = readMelFilters(
+        kMelFiltersPath,
+        melFilters.data(),
+        static_cast<int>(melFilters.size()));
+    if (result != 0) {
+        std::printf(
+            "Failed to read Mel filters: result=%d, path=%s\n",
+            result,
+            kMelFiltersPath);
+        goto cleanup;
     }
 
-    ret = read_vocab(vocab_path, vocab);
-    if (ret != 0)
-    {
-        printf("read vocab fail! ret=%d vocab_path=%s\n", ret, vocab_path);
-        goto out;
+    result = readVocab(vocabPath, vocab.data());
+    if (result != 0) {
+        std::printf("Failed to read vocabulary: result=%d, path=%s\n", result, vocabPath);
+        goto cleanup;
     }
     timer.tok();
-    timer.printTime("read_mel_filters & read_vocab");
+    timer.printTime("Read Mel filters and vocabulary");
 
     timer.tik();
-    ret = init_whisper_model(encoder_path, &rknn_app_ctx.encoder_context);
-    if (ret != 0)
-    {
-        printf("init_whisper_model fail! ret=%d encoder_path=%s\n", ret, encoder_path);
-        goto out;
+    result = initializeWhisperModel(encoderPath, &appContext.encoderContext);
+    if (result != 0) {
+        std::printf(
+            "Failed to initialize Whisper encoder: result=%d, path=%s\n",
+            result,
+            encoderPath);
+        goto cleanup;
     }
     timer.tok();
-    timer.printTime("init_whisper_encoder_model");
+    timer.printTime("Initialize Whisper encoder");
 
     timer.tik();
-    ret = init_whisper_model(decoder_path, &rknn_app_ctx.decoder_context);
-    if (ret != 0)
-    {
-        printf("init_whisper_model fail! ret=%d decoder_path=%s\n", ret, decoder_path);
-        goto out;
+    result = initializeWhisperModel(decoderPath, &appContext.decoderContext);
+    if (result != 0) {
+        std::printf(
+            "Failed to initialize Whisper decoder: result=%d, path=%s\n",
+            result,
+            decoderPath);
+        goto cleanup;
     }
     timer.tok();
-    timer.printTime("init_whisper_decoder_model");
+    timer.printTime("Initialize Whisper decoder");
 
     timer.tik();
-    audio_preprocess(&audio, mel_filters, audio_data);
-
-    ret = inference_whisper_model(&rknn_app_ctx, audio_data, mel_filters, vocab, task_code, recognized_text);
-    if (ret != 0)
-    {
-        printf("inference_whisper_model fail! ret=%d\n", ret);
-        goto out;
+    preprocessAudio(&audio, melFilters.data(), audioData);
+    result = runWhisperInference(
+        &appContext,
+        audioData,
+        vocab.data(),
+        taskCode,
+        recognizedText);
+    if (result != 0) {
+        std::printf("Whisper inference failed: result=%d\n", result);
+        goto cleanup;
     }
     timer.tok();
-    timer.printTime("inference_whisper_model");
+    timer.printTime("Run Whisper inference");
 
-    // print result
     std::cout << "\nWhisper output: ";
-    for (const auto &str : recognized_text)
-    {
-        std::cout << str;
+    for (const auto& text : recognizedText) {
+        std::cout << text;
     }
-    std::cout << std::endl;
+    std::cout << '\n';
 
-    infer_time = timer.elapsedMs() / 1000.0;               // sec
-    audio_length = audio.num_frames / (float)SAMPLE_RATE; // sec
-    audio_length = audio_length > (float)CHUNK_LENGTH ? (float)CHUNK_LENGTH : audio_length;
-    rtf = infer_time / audio_length;
-    printf("\nReal Time Factor (RTF): %.3f / %.3f = %.3f\n", infer_time, audio_length, rtf);
-
-out:
-
-    ret = release_whisper_model(&rknn_app_ctx.encoder_context);
-    if (ret != 0)
     {
-        printf("release_whisper_model encoder_context fail! ret=%d\n", ret);
-    }
-    ret = release_whisper_model(&rknn_app_ctx.decoder_context);
-    if (ret != 0)
-    {
-        printf("release_ppocr_model decoder_context fail! ret=%d\n", ret);
+        const float inferenceTime = timer.elapsedMs() / 1000.0f;
+        const float audioLength = std::min(
+            audio.numFrames / static_cast<float>(kSampleRate),
+            static_cast<float>(kChunkLength));
+        const float realTimeFactor = inferenceTime / audioLength;
+        std::printf(
+            "\nReal Time Factor (RTF): %.3f / %.3f = %.3f\n",
+            inferenceTime,
+            audioLength,
+            realTimeFactor);
     }
 
-    if (audio.data != NULL)
-    {
-        free(audio.data);
+cleanup:
+    result = releaseWhisperModel(&appContext.encoderContext);
+    if (result != 0) {
+        std::printf("Failed to release Whisper encoder: result=%d\n", result);
+    }
+    result = releaseWhisperModel(&appContext.decoderContext);
+    if (result != 0) {
+        std::printf("Failed to release Whisper decoder: result=%d\n", result);
     }
 
-    for (int i = 0; i < VOCAB_NUM; ++i)
-    {
-        if (vocab[i].token != NULL)
-        {
-            free(vocab[i].token);
-            vocab[i].token = NULL;
-        }
-    }
-
-    if (mel_filters != NULL)
-    {
-        free(mel_filters);
+    std::free(audio.data);
+    for (auto& entry : vocab) {
+        std::free(entry.token);
+        entry.token = nullptr;
     }
 
     return 0;

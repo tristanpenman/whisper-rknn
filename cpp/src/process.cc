@@ -12,107 +12,103 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "whisper.h"
-#include <math.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "process.h"
+
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <vector>
+
 #include <fftw3.h>
 #include <opencv2/opencv.hpp>
 
 #define ENABLE_NEON 1
 
 #if ENABLE_NEON
-#include "arm_neon.h"
+#include <arm_neon.h>
 #endif
 
-int read_mel_filters(const char *fileName, float *data, int max_lines)
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+void padMelSpectrogram(
+    const std::vector<float>& input,
+    int inputRows,
+    int inputColumns,
+    std::vector<float>& output,
+    int outputColumns)
 {
-    FILE *file;
-    int line_count = 0;
-
-    file = fopen(fileName, "r");
-    if (file == NULL)
-    {
-        perror("Error opening file");
-        return -1;
-    }
-
-    while (line_count < max_lines && fscanf(file, "%f", &data[line_count]) == 1)
-    {
-        line_count++;
-    }
-
-    fclose(file);
-
-    return 0;
-}
-
-static void pad_x_mel(const std::vector<float> input, int rows_input, int cols_input, std::vector<float> &output, int cols_output)
-{
-    for (int i = 0; i < rows_input; ++i)
-    {
-        std::copy(input.begin() + i * cols_input, input.begin() + (i + 1) * cols_input, output.begin() + i * cols_output);
+    for (int row = 0; row < inputRows; ++row) {
+        std::copy(
+            input.begin() + row * inputColumns,
+            input.begin() + (row + 1) * inputColumns,
+            output.begin() + row * outputColumns);
     }
 }
 
-static void hann_window(std::vector<float> &window, int length)
+void makeHannWindow(std::vector<float>& window, int length)
 {
-    for (int i = 0; i < length; i++)
-    {
-        window[i] = 0.5 * (1 - cos(2 * M_PI * i / (length - 1)));
+    for (int i = 0; i < length; ++i) {
+        window[i] = 0.5f * (1.0f - std::cos(2.0 * kPi * i / (length - 1)));
     }
 }
 
-static void reflect_pad(const std::vector<float> &audio, std::vector<float> &padded_audio, int pad_width)
+void reflectPad(
+    const std::vector<float>& audio,
+    std::vector<float>& paddedAudio,
+    int paddingWidth)
 {
-
-    std::copy(audio.begin(), audio.end(), padded_audio.begin() + pad_width);
-    std::reverse_copy(audio.begin(), audio.begin() + pad_width, padded_audio.begin());
-    std::reverse_copy(audio.end() - pad_width, audio.end(), padded_audio.end() - pad_width);
+    std::copy(audio.begin(), audio.end(), paddedAudio.begin() + paddingWidth);
+    std::reverse_copy(audio.begin(), audio.begin() + paddingWidth, paddedAudio.begin());
+    std::reverse_copy(audio.end() - paddingWidth, audio.end(), paddedAudio.end() - paddingWidth);
 }
 
 #if ENABLE_NEON
-static void stfts_neon(const std::vector<float> &audio, int audio_length, int window_length, int hop_length, const std::vector<float> &window, fftwf_complex *stft_result, int num_frames)
+void computeStftsNeon(
+    const std::vector<float>& audio,
+    int audioLength,
+    int windowLength,
+    int hopLength,
+    const std::vector<float>& window,
+    fftwf_complex* stftResult,
+    int numFrames)
 {
-    float *input = (float *)fftwf_malloc(sizeof(float) * window_length);
-    fftwf_complex *output = (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * (window_length / 2 + 1));
-    fftwf_plan plan = fftwf_plan_dft_r2c_1d(window_length, input, output, FFTW_ESTIMATE);
-    for (int i = 0; i < num_frames; i++)
-    {
-        int start = i * hop_length;
-        int end = start + window_length;
-        for (int j = 0; j < window_length - 3; j += 4)
-        {
-            if (start + j < audio_length)
-            {
-                float32x4_t in = vld1q_f32(audio.data() + start + j);
-                float32x4_t win = vld1q_f32(window.data() + j);
-                float32x4_t out = vmulq_f32(in, win);
-                vst1q_f32(input + j, out);
-            }
-            else
-            {
-                vst1q_f32(input + j, vdupq_n_f32(0.0f));
+    auto* input = static_cast<float*>(fftwf_malloc(sizeof(float) * windowLength));
+    auto* output = static_cast<fftwf_complex*>(
+        fftwf_malloc(sizeof(fftwf_complex) * (windowLength / 2 + 1)));
+    const fftwf_plan plan = fftwf_plan_dft_r2c_1d(windowLength, input, output, FFTW_ESTIMATE);
+
+    for (int frame = 0; frame < numFrames; ++frame) {
+        const int start = frame * hopLength;
+        for (int i = 0; i < windowLength - 3; i += 4) {
+            if (start + i < audioLength) {
+                const float32x4_t samples = vld1q_f32(audio.data() + start + i);
+                const float32x4_t windowValues = vld1q_f32(window.data() + i);
+                vst1q_f32(input + i, vmulq_f32(samples, windowValues));
+            } else {
+                vst1q_f32(input + i, vdupq_n_f32(0.0f));
             }
         }
 
-        for (int j = window_length - window_length % 4; j < window_length; j++)
-        {
-            if (start + j < audio_length)
-            {
-                input[j] = audio[start + j] * window[j];
-            }
-            else
-            {
-                input[j] = 0.0f;
+        for (int i = windowLength - windowLength % 4; i < windowLength; ++i) {
+            if (start + i < audioLength) {
+                input[i] = audio[start + i] * window[i];
+            } else {
+                input[i] = 0.0f;
             }
         }
 
         fftwf_execute(plan);
-        memcpy(stft_result + i * (window_length / 2 + 1), output, sizeof(fftwf_complex) * (window_length / 2 + 1));
+        std::memcpy(
+            stftResult + frame * (windowLength / 2 + 1),
+            output,
+            sizeof(fftwf_complex) * (windowLength / 2 + 1));
     }
 
     fftwf_free(input);
@@ -120,31 +116,35 @@ static void stfts_neon(const std::vector<float> &audio, int audio_length, int wi
     fftwf_destroy_plan(plan);
 }
 #else
-static void stfts(const std::vector<float> &audio, int audio_length, int window_length, int hop_length, const std::vector<float> &window, fftwf_complex *stft_result, int num_frames)
+void computeStfts(
+    const std::vector<float>& audio,
+    int audioLength,
+    int windowLength,
+    int hopLength,
+    const std::vector<float>& window,
+    fftwf_complex* stftResult,
+    int numFrames)
 {
-    float *input = (float *)fftwf_malloc(sizeof(float) * window_length);
-    fftwf_complex *output = (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * (window_length / 2 + 1));
-    fftwf_plan plan = fftwf_plan_dft_r2c_1d(window_length, input, output, FFTW_ESTIMATE);
+    auto* input = static_cast<float*>(fftwf_malloc(sizeof(float) * windowLength));
+    auto* output = static_cast<fftwf_complex*>(
+        fftwf_malloc(sizeof(fftwf_complex) * (windowLength / 2 + 1)));
+    const fftwf_plan plan = fftwf_plan_dft_r2c_1d(windowLength, input, output, FFTW_ESTIMATE);
 
-    for (int i = 0; i < num_frames; i++)
-    {
-        int start = i * hop_length;
-        int end = start + window_length;
-
-        for (int j = 0; j < window_length; j++)
-        {
-            if (start + j < audio_length)
-            {
-                input[j] = audio[start + j] * window[j];
-            }
-            else
-            {
-                input[j] = 0.0f;
+    for (int frame = 0; frame < numFrames; ++frame) {
+        const int start = frame * hopLength;
+        for (int i = 0; i < windowLength; ++i) {
+            if (start + i < audioLength) {
+                input[i] = audio[start + i] * window[i];
+            } else {
+                input[i] = 0.0f;
             }
         }
 
         fftwf_execute(plan);
-        memcpy(stft_result + i * (window_length / 2 + 1), output, sizeof(fftwf_complex) * (window_length / 2 + 1));
+        std::memcpy(
+            stftResult + frame * (windowLength / 2 + 1),
+            output,
+            sizeof(fftwf_complex) * (windowLength / 2 + 1));
     }
 
     fftwf_free(input);
@@ -153,306 +153,377 @@ static void stfts(const std::vector<float> &audio, int audio_length, int window_
 }
 #endif
 
-static float compute_magnitude(const fftwf_complex &value)
+float computeMagnitude(const fftwf_complex& value)
 {
     return value[0] * value[0] + value[1] * value[1];
 }
 
-static void compute_magnitudes(fftwf_complex *stft_result, int num_mel_filters, int num_frames, std::vector<float> &magnitudes)
+void computeMagnitudes(
+    const fftwf_complex* stftResult,
+    int numMelFilters,
+    int numFrames,
+    std::vector<float>& magnitudes)
 {
-    int k = 0;
-    for (int i = 0; i < num_mel_filters; i++)
-    {
-        for (int j = 0; j < num_frames - 1; j++)
-        {
-            magnitudes[k] = compute_magnitude(stft_result[i * num_frames + j]);
-            k++;
+    int outputIndex = 0;
+    for (int filter = 0; filter < numMelFilters; ++filter) {
+        for (int frame = 0; frame < numFrames - 1; ++frame) {
+            magnitudes[outputIndex] = computeMagnitude(stftResult[filter * numFrames + frame]);
+            ++outputIndex;
         }
     }
 }
 
-static void clamp_and_log_max(std::vector<float> &mel_spec, int rows, int cols)
+void clampAndNormalize(std::vector<float>& melSpectrogram, int rows, int columns)
 {
-    float min_val = 1e-10;
-    float scaling_factor = 1.0 / 4.0;
-    float shift_value = 4.0;
+    constexpr float kMinimumValue = 1e-10f;
+    constexpr float kScalingFactor = 0.25f;
+    constexpr float kShiftValue = 4.0f;
 
-    float max_val = mel_spec[0];
-    for (int i = 0; i < rows * cols; ++i)
-    {
-        float value = mel_spec[i];
-        value = (value < min_val) ? min_val : value;
-        mel_spec[i] = log10f(value);
-
-        if (mel_spec[i] > max_val)
-            max_val = mel_spec[i];
+    float maxValue = melSpectrogram[0];
+    for (int i = 0; i < rows * columns; ++i) {
+        const float value = std::max(melSpectrogram[i], kMinimumValue);
+        melSpectrogram[i] = std::log10(value);
+        if (melSpectrogram[i] > maxValue) {
+            maxValue = melSpectrogram[i];
+        }
     }
 
-    float threshold = max_val - 8.0;
-    for (int i = 0; i < rows * cols; ++i)
-    {
-        mel_spec[i] = (std::max(mel_spec[i], threshold) + shift_value) * scaling_factor;
+    const float threshold = maxValue - 8.0f;
+    for (int i = 0; i < rows * columns; ++i) {
+        melSpectrogram[i] =
+            (std::max(melSpectrogram[i], threshold) + kShiftValue) * kScalingFactor;
     }
 }
 
-void transpose(fftwf_complex *input, int input_rows, int input_cols, fftwf_complex *output)
+void transposeComplex(
+    const fftwf_complex* input,
+    int inputRows,
+    int inputColumns,
+    fftwf_complex* output)
 {
-    for (int i = 0; i < input_rows; ++i)
-    {
-        for (int j = 0; j < input_cols; ++j)
-        {
-            int input_index = i * input_cols + j;
-            int output_index = j * input_rows + i;
-
-            output[output_index][0] = input[input_index][0];
-            output[output_index][1] = input[input_index][1];
+    for (int row = 0; row < inputRows; ++row) {
+        for (int column = 0; column < inputColumns; ++column) {
+            const int inputIndex = row * inputColumns + column;
+            const int outputIndex = column * inputRows + row;
+            output[outputIndex][0] = input[inputIndex][0];
+            output[outputIndex][1] = input[inputIndex][1];
         }
     }
 }
 
 #if ENABLE_NEON
-void matmul_by_neon(float *A, float *B, std::vector<float> &C, int ROWS_A, int COLS_A, int COLS_B)
+void multiplyMatricesNeon(
+    const float* left,
+    const float* right,
+    std::vector<float>& output,
+    int leftRows,
+    int sharedColumns,
+    int rightColumns)
 {
-    int k_start = COLS_A, k_end = 0;
-    for (auto i = 0; i < ROWS_A; i++)
-    {
-        for (auto k = 0; k < COLS_A; k++)
-        {
-            if (A[i * COLS_A + k] != 0.0f)
-            {
-                k_start = k;
+    int firstNonZero = sharedColumns;
+    int lastNonZero = 0;
+
+    for (int row = 0; row < leftRows; ++row) {
+        for (int shared = 0; shared < sharedColumns; ++shared) {
+            if (left[row * sharedColumns + shared] != 0.0f) {
+                firstNonZero = shared;
                 break;
             }
         }
-        for (auto k = COLS_A - 1; k > 0; k--)
-        {
-            if (A[i * COLS_A + k] != 0.0f)
-            {
-                k_end = k;
+        for (int shared = sharedColumns - 1; shared > 0; --shared) {
+            if (left[row * sharedColumns + shared] != 0.0f) {
+                lastNonZero = shared;
                 break;
             }
         }
 
-        int k_diff = k_end - k_start + 1;
-        if (k_diff % 4)
-        {
-            k_diff = 4 - (k_diff % 4);
-            if (k_start > k_diff)
-                k_start -= k_diff;
-            else if (k_end < (COLS_A - k_diff))
-                k_end += k_diff;
+        int nonZeroCount = lastNonZero - firstNonZero + 1;
+        if (nonZeroCount % 4 != 0) {
+            const int adjustment = 4 - nonZeroCount % 4;
+            if (firstNonZero > adjustment) {
+                firstNonZero -= adjustment;
+            } else if (lastNonZero < sharedColumns - adjustment) {
+                lastNonZero += adjustment;
+            }
         }
-        k_diff = (k_end - k_start) % 4;
-        for (auto j = 0; j < COLS_B; j++)
-        {
-            float32x4_t v_tot = vdupq_n_f32(0.0f);
-            for (auto k = k_start; k <= k_end - 3; k += 4)
-            {
-                float32x4_t vq_mat1 = vld1q_f32(&A[i * COLS_A + k]);
-                float32x4_t vq_mat2 = vld1q_f32(&B[k * COLS_B + j]);
-                v_tot = vmlaq_f32(v_tot, vq_mat1, vq_mat2);
+
+        for (int column = 0; column < rightColumns; ++column) {
+            float32x4_t total = vdupq_n_f32(0.0f);
+            for (int shared = firstNonZero; shared <= lastNonZero - 3; shared += 4) {
+                const float32x4_t leftValues =
+                    vld1q_f32(&left[row * sharedColumns + shared]);
+                const float32x4_t rightValues =
+                    vld1q_f32(&right[shared * rightColumns + column]);
+                total = vmlaq_f32(total, leftValues, rightValues);
             }
 
-            float32x2_t tmp = vadd_f32(vget_high_f32(v_tot), vget_low_f32(v_tot));
-            C[i * COLS_B + j] = vget_lane_f32(tmp, 0) + vget_lane_f32(tmp, 1);
+            const float32x2_t sum = vadd_f32(vget_high_f32(total), vget_low_f32(total));
+            output[row * rightColumns + column] = vget_lane_f32(sum, 0) + vget_lane_f32(sum, 1);
         }
     }
 }
 #else
-void matmul_by_opencv(float *A, float *B, std::vector<float> &C, int ROWS_A, int COLS_A, int COLS_B)
+void multiplyMatricesOpenCv(
+    float* left,
+    float* right,
+    std::vector<float>& output,
+    int leftRows,
+    int sharedColumns,
+    int rightColumns)
 {
-    cv::Mat mat_A(ROWS_A, COLS_A, CV_32F, A);
-    cv::Mat mat_B(COLS_A, COLS_B, CV_32F, B);
-    cv::Mat mat_C(ROWS_A, COLS_B, CV_32F);
-    cv::gemm(mat_A, mat_B, 1.0, cv::Mat(), 0.0, mat_C);
-    memcpy(C.data(), mat_C.data, ROWS_A * COLS_B * sizeof(float));
+    cv::Mat leftMatrix(leftRows, sharedColumns, CV_32F, left);
+    cv::Mat rightMatrix(sharedColumns, rightColumns, CV_32F, right);
+    cv::Mat outputMatrix(leftRows, rightColumns, CV_32F);
+    cv::gemm(leftMatrix, rightMatrix, 1.0, cv::Mat(), 0.0, outputMatrix);
+    std::memcpy(
+        output.data(),
+        outputMatrix.data,
+        leftRows * rightColumns * sizeof(float));
 }
 #endif
 
-static void log_mel_spectrogram(float *audio_data, int audio_length, int cur_num_frames_of_stfts, float *filters, std::vector<float> &mel_spec)
+void computeLogMelSpectrogram(
+    const float* audioData,
+    int audioLength,
+    int numStftFrames,
+    const float* filters,
+    std::vector<float>& melSpectrogram)
 {
-    std::vector<float> window(N_FFT);
-    hann_window(window, N_FFT);
+    std::vector<float> window(kFftSize);
+    makeHannWindow(window, kFftSize);
 
-    std::vector<float> audio(audio_data, audio_data + audio_length);
-    int padded_size = audio_length + N_FFT;
-    std::vector<float> padded_audio(padded_size);
-    reflect_pad(audio, padded_audio, N_FFT / 2);
+    std::vector<float> audio(audioData, audioData + audioLength);
+    std::vector<float> paddedAudio(audioLength + kFftSize);
+    reflectPad(audio, paddedAudio, kFftSize / 2);
 
-    fftwf_complex *stfts_result = (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * MELS_FILTERS_SIZE * cur_num_frames_of_stfts);
+    auto* stftResult = static_cast<fftwf_complex*>(
+        fftwf_malloc(sizeof(fftwf_complex) * kMelFilterSize * numStftFrames));
 #if ENABLE_NEON
-    stfts_neon(padded_audio, audio_length + N_FFT, N_FFT, HOP_LENGTH, window, stfts_result, cur_num_frames_of_stfts);
+    computeStftsNeon(
+        paddedAudio,
+        audioLength + kFftSize,
+        kFftSize,
+        kHopLength,
+        window,
+        stftResult,
+        numStftFrames);
 #else
-    stfts(padded_audio, audio_length + N_FFT, N_FFT, HOP_LENGTH, window, stfts_result, cur_num_frames_of_stfts);
+    computeStfts(
+        paddedAudio,
+        audioLength + kFftSize,
+        kFftSize,
+        kHopLength,
+        window,
+        stftResult,
+        numStftFrames);
 #endif
 
-    fftwf_complex *stfts_result_t = (fftwf_complex *)fftwf_malloc(sizeof(fftwf_complex) * MELS_FILTERS_SIZE * cur_num_frames_of_stfts);
-    transpose(stfts_result, cur_num_frames_of_stfts, MELS_FILTERS_SIZE, stfts_result_t);
+    auto* transposedStftResult = static_cast<fftwf_complex*>(
+        fftwf_malloc(sizeof(fftwf_complex) * kMelFilterSize * numStftFrames));
+    transposeComplex(stftResult, numStftFrames, kMelFilterSize, transposedStftResult);
 
-    std::vector<float> magnitudes(MELS_FILTERS_SIZE * (cur_num_frames_of_stfts - 1));
-    compute_magnitudes(stfts_result_t, MELS_FILTERS_SIZE, cur_num_frames_of_stfts, magnitudes);
+    std::vector<float> magnitudes(kMelFilterSize * (numStftFrames - 1));
+    computeMagnitudes(transposedStftResult, kMelFilterSize, numStftFrames, magnitudes);
 
-    int ROWS_A = N_MELS;
-    int COLS_A = MELS_FILTERS_SIZE;
-    int COLS_B = cur_num_frames_of_stfts - 1;
+    constexpr int kMelRows = kNumMels;
+    const int melColumns = numStftFrames - 1;
 #if ENABLE_NEON
-    matmul_by_neon(filters, magnitudes.data(), mel_spec, ROWS_A, COLS_A, COLS_B);
+    multiplyMatricesNeon(
+        filters,
+        magnitudes.data(),
+        melSpectrogram,
+        kMelRows,
+        kMelFilterSize,
+        melColumns);
 #else
-    matmul_by_opencv(filters, magnitudes.data(), mel_spec, ROWS_A, COLS_A, COLS_B);
+    multiplyMatricesOpenCv(
+        filters,
+        magnitudes.data(),
+        melSpectrogram,
+        kMelRows,
+        kMelFilterSize,
+        melColumns);
 #endif
 
-    clamp_and_log_max(mel_spec, ROWS_A, COLS_B);
-
-    fftwf_free(stfts_result);
-    fftwf_free(stfts_result_t);
+    clampAndNormalize(melSpectrogram, kMelRows, melColumns);
+    fftwf_free(stftResult);
+    fftwf_free(transposedStftResult);
 }
 
-void audio_preprocess(audio_buffer_t *audio, float *mel_filters, std::vector<float> &x_mel)
+std::int32_t base64CharacterIndex(char character)
 {
-    int ret;
-    int audio_length = audio->num_frames;
-    std::vector<float> ori_audio_data(audio->data, audio->data + audio_length);
-
-    if (audio_length >= MAX_AUDIO_LENGTH)
-    {
-        std::vector<float> trim_audio_data(MAX_AUDIO_LENGTH);
-        std::copy(ori_audio_data.begin(), ori_audio_data.begin() + MAX_AUDIO_LENGTH, trim_audio_data.begin());
-        int cur_num_frames_of_stfts = MAX_AUDIO_LENGTH / HOP_LENGTH + 1;
-        log_mel_spectrogram(trim_audio_data.data(), MAX_AUDIO_LENGTH, cur_num_frames_of_stfts, mel_filters, x_mel);
+    if (character >= 'A' && character <= 'Z') {
+        return character - 'A';
     }
-    else
-    {
-        int cur_num_frames_of_stfts = audio_length / HOP_LENGTH + 1;
-        int x_mel_rows = N_MELS;
-        int x_mel_cols = cur_num_frames_of_stfts - 1;
-        int x_mel_cols_pad = MAX_AUDIO_LENGTH / HOP_LENGTH;
-        std::vector<float> cur_x_mel(x_mel_rows * x_mel_cols, 0.0f);
-        log_mel_spectrogram(ori_audio_data.data(), audio_length, cur_num_frames_of_stfts, mel_filters, cur_x_mel);
-        pad_x_mel(cur_x_mel, x_mel_rows, x_mel_cols, x_mel, x_mel_cols_pad);
+    if (character >= 'a' && character <= 'z') {
+        return character - 'a' + ('Z' - 'A') + 1;
     }
-}
-
-int read_vocab(const char *fileName, VocabEntry *vocab)
-{
-    FILE *fp;
-    char line[512];
-
-    fp = fopen(fileName, "r");
-    if (fp == NULL)
-    {
-        perror("Error opening file");
-        return -1;
+    if (character >= '0' && character <= '9') {
+        return character - '0' + ('Z' - 'A') + ('z' - 'a') + 2;
     }
-
-    int count = 0;
-    while (fgets(line, sizeof(line), fp))
-    {
-        vocab[count].token = strdup(strchr(line, ' ') + 1); // Get token after the first space
-        vocab[count].index = atoi(line);                    // Get index before the first space
-        count++;
-    }
-
-    fclose(fp);
-
-    return 0;
-}
-
-void replace_substr(std::string &str, const std::string &from, const std::string &to)
-{
-    if (from.empty())
-        return; // Prevent infinite loop if 'from' is empty
-    size_t start_pos = 0;
-    while ((start_pos = str.find(from, start_pos)) != std::string::npos)
-    {
-        str.replace(start_pos, from.length(), to);
-        start_pos += to.length(); // Advance position by length of the replacement
-    }
-}
-
-int argmax(float *array)
-{
-    int start_index = (MAX_TOKENS - 1) * 1 * VOCAB_NUM;
-    int max_index = 0;
-    float max_value = array[start_index];
-    for (int i = start_index + 1; i < start_index + VOCAB_NUM; i++)
-    {
-        if (array[i] > max_value)
-        {
-            max_value = array[i];
-            max_index = i;
-        }
-    }
-    int relative_index = max_index - start_index;
-    return relative_index;
-}
-
-static int32_t get_char_index(char c)
-{
-    if (c >= 'A' && c <= 'Z')
-    {
-        return c - 'A';
-    }
-    else if (c >= 'a' && c <= 'z')
-    {
-        return c - 'a' + ('Z' - 'A') + 1;
-    }
-    else if (c >= '0' && c <= '9')
-    {
-        return c - '0' + ('Z' - 'A') + ('z' - 'a') + 2;
-    }
-    else if (c == '+')
-    {
+    if (character == '+') {
         return 62;
     }
-    else if (c == '/')
-    {
+    if (character == '/') {
         return 63;
     }
 
-    std::cerr << "Unknown character " << static_cast<int>(c) << ", " << c << std::endl;
-    exit(-1);
+    std::cerr << "Unknown character " << static_cast<int>(character) << ", " << character << '\n';
+    std::exit(-1);
 }
 
-std::string base64_decode(const std::string &encoded_string)
+}  // namespace
+
+int readMelFilters(const char* fileName, float* data, int maxLines)
 {
-    // see
-    // https://github.com/ReneNyffenegger/cpp-base64/blob/master/base64.cpp#L243
-    // https://github.com/k2-fsa/sherpa-onnx/blob/master/sherpa-onnx/csrc/base64-decode.cc
-    if (encoded_string.empty())
-    {
-        std::cerr << "Empty string!" << std::endl;
-        exit(-1);
+    FILE* file = std::fopen(fileName, "r");
+    if (file == nullptr) {
+        std::perror("Error opening file");
+        return -1;
     }
 
-    int32_t output_length = static_cast<int32_t>(encoded_string.size()) / 4 * 3;
+    int lineCount = 0;
+    while (lineCount < maxLines && std::fscanf(file, "%f", &data[lineCount]) == 1) {
+        ++lineCount;
+    }
 
-    std::string decoded_string;
-    decoded_string.reserve(output_length);
+    std::fclose(file);
+    return 0;
+}
 
-    int32_t index = 0;
-    while (index < static_cast<int32_t>(encoded_string.size()))
-    {
-        if (encoded_string[index] == '=')
-        {
+void preprocessAudio(
+    AudioBuffer* audio,
+    const float* melFilters,
+    std::vector<float>& melSpectrogram)
+{
+    const int audioLength = audio->numFrames;
+    std::vector<float> originalAudioData(audio->data, audio->data + audioLength);
+
+    if (audioLength >= kMaxAudioLength) {
+        std::vector<float> trimmedAudioData(kMaxAudioLength);
+        std::copy(
+            originalAudioData.begin(),
+            originalAudioData.begin() + kMaxAudioLength,
+            trimmedAudioData.begin());
+        const int numStftFrames = kMaxAudioLength / kHopLength + 1;
+        computeLogMelSpectrogram(
+            trimmedAudioData.data(),
+            kMaxAudioLength,
+            numStftFrames,
+            melFilters,
+            melSpectrogram);
+        return;
+    }
+
+    const int numStftFrames = audioLength / kHopLength + 1;
+    constexpr int kMelRows = kNumMels;
+    const int melColumns = numStftFrames - 1;
+    constexpr int kPaddedMelColumns = kMaxAudioLength / kHopLength;
+    std::vector<float> currentMelSpectrogram(kMelRows * melColumns, 0.0f);
+    computeLogMelSpectrogram(
+        originalAudioData.data(),
+        audioLength,
+        numStftFrames,
+        melFilters,
+        currentMelSpectrogram);
+    padMelSpectrogram(
+        currentMelSpectrogram,
+        kMelRows,
+        melColumns,
+        melSpectrogram,
+        kPaddedMelColumns);
+}
+
+int readVocab(const char* fileName, VocabEntry* vocab)
+{
+    FILE* file = std::fopen(fileName, "r");
+    if (file == nullptr) {
+        std::perror("Error opening file");
+        return -1;
+    }
+
+    char line[512];
+    int count = 0;
+    while (std::fgets(line, sizeof(line), file) != nullptr) {
+        // The vocabulary format is an integer index followed by a token.
+        vocab[count].token = strdup(std::strchr(line, ' ') + 1);
+        vocab[count].index = std::atoi(line);
+        ++count;
+    }
+
+    std::fclose(file);
+    return 0;
+}
+
+void replaceSubstring(
+    std::string& value,
+    const std::string& from,
+    const std::string& to)
+{
+    if (from.empty()) {
+        return;
+    }
+
+    std::size_t startPosition = 0;
+    while ((startPosition = value.find(from, startPosition)) != std::string::npos) {
+        value.replace(startPosition, from.length(), to);
+        startPosition += to.length();
+    }
+}
+
+int argmax(const float* array)
+{
+    const int startIndex = (kMaxTokens - 1) * kVocabSize;
+    int maxIndex = startIndex;
+    float maxValue = array[startIndex];
+    for (int i = startIndex + 1; i < startIndex + kVocabSize; ++i) {
+        if (array[i] > maxValue) {
+            maxValue = array[i];
+            maxIndex = i;
+        }
+    }
+    return maxIndex - startIndex;
+}
+
+std::string decodeBase64(const std::string& encodedString)
+{
+    if (encodedString.empty()) {
+        std::cerr << "Cannot decode an empty Base64 string.\n";
+        std::exit(-1);
+    }
+
+    const std::int32_t outputLength = static_cast<std::int32_t>(encodedString.size()) / 4 * 3;
+    std::string decodedString;
+    decodedString.reserve(outputLength);
+
+    std::int32_t index = 0;
+    while (index < static_cast<std::int32_t>(encodedString.size())) {
+        if (encodedString[index] == '=') {
             return " ";
         }
 
-        int32_t first_byte = (get_char_index(encoded_string[index]) << 2) + ((get_char_index(encoded_string[index + 1]) & 0x30) >> 4);
-        decoded_string.push_back(static_cast<char>(first_byte));
+        const std::int32_t firstByte =
+            (base64CharacterIndex(encodedString[index]) << 2)
+            + ((base64CharacterIndex(encodedString[index + 1]) & 0x30) >> 4);
+        decodedString.push_back(static_cast<char>(firstByte));
 
-        if (index + 2 < static_cast<int32_t>(encoded_string.size()) && encoded_string[index + 2] != '=')
-        {
-            int32_t second_byte = ((get_char_index(encoded_string[index + 1]) & 0x0f) << 4) + ((get_char_index(encoded_string[index + 2]) & 0x3c) >> 2);
-            decoded_string.push_back(static_cast<char>(second_byte));
+        if (index + 2 < static_cast<std::int32_t>(encodedString.size())
+            && encodedString[index + 2] != '=') {
+            const std::int32_t secondByte =
+                ((base64CharacterIndex(encodedString[index + 1]) & 0x0f) << 4)
+                + ((base64CharacterIndex(encodedString[index + 2]) & 0x3c) >> 2);
+            decodedString.push_back(static_cast<char>(secondByte));
 
-            if (index + 3 < static_cast<int32_t>(encoded_string.size()) && encoded_string[index + 3] != '=')
-            {
-                int32_t third_byte = ((get_char_index(encoded_string[index + 2]) & 0x03) << 6) + get_char_index(encoded_string[index + 3]);
-                decoded_string.push_back(static_cast<char>(third_byte));
+            if (index + 3 < static_cast<std::int32_t>(encodedString.size())
+                && encodedString[index + 3] != '=') {
+                const std::int32_t thirdByte =
+                    ((base64CharacterIndex(encodedString[index + 2]) & 0x03) << 6)
+                    + base64CharacterIndex(encodedString[index + 3]);
+                decodedString.push_back(static_cast<char>(thirdByte));
             }
         }
         index += 4;
     }
 
-    return decoded_string;
+    return decodedString;
 }

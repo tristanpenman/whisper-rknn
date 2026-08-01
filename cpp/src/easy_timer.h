@@ -19,8 +19,8 @@
 
 #include "logger.h"
 
-// Define this macro to disable timing logs
-// #define TIMING_DISABLED // if you don't need to print the time used, uncomment this line of code
+// Define this macro to disable timing logs.
+// #define TIMING_DISABLED
 
 class EasyTimer
 {
@@ -47,8 +47,9 @@ public:
     }
 
 #ifdef TIMING_DISABLED
-    void printTime(const char* label)
+    void printTime(const char* label) const
     {
+        (void)label;
     }
 #else
     void printTime(const char* label) const

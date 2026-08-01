@@ -12,32 +12,34 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _RKNN_DEMO_WHISPER_H_
-#define _RKNN_DEMO_WHISPER_H_
+#pragma once
+
+#include <string>
+#include <vector>
 
 #include "rknn_api.h"
-#include "audio_utils.h"
-#include <iostream>
-#include <vector>
-#include <string>
+
 #include "process.h"
 
-typedef struct
+struct RknnAppContext
 {
-    rknn_context rknn_ctx;
-    rknn_input_output_num io_num;
-    rknn_tensor_attr *input_attrs;
-    rknn_tensor_attr *output_attrs;
-} rknn_app_context_t;
+    rknn_context rknnContext = 0;
+    rknn_input_output_num ioCount{};
+    rknn_tensor_attr* inputAttributes = nullptr;
+    rknn_tensor_attr* outputAttributes = nullptr;
+};
 
-typedef struct
+struct RknnWhisperContext
 {
-    rknn_app_context_t encoder_context;
-    rknn_app_context_t decoder_context;
-} rknn_whisper_context_t;
+    RknnAppContext encoderContext;
+    RknnAppContext decoderContext;
+};
 
-int init_whisper_model(const char *model_path, rknn_app_context_t *app_ctx);
-int release_whisper_model(rknn_app_context_t *app_ctx);
-int inference_whisper_model(rknn_whisper_context_t *app_ctx, std::vector<float> audio_data, float *mel_filters, VocabEntry *vocab, int task_code, std::vector<std::string> &recognized_text);
-
-#endif //_RKNN_DEMO_WHISPER_H_
+int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext);
+int releaseWhisperModel(RknnAppContext* appContext);
+int runWhisperInference(
+    RknnWhisperContext* appContext,
+    const std::vector<float>& audioData,
+    const VocabEntry* vocab,
+    int taskCode,
+    std::vector<std::string>& recognizedText);

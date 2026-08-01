@@ -1,38 +1,36 @@
-#ifndef _RKNN_WHISPER_DEMO_PROCESS_H_
-#define _RKNN_WHISPER_DEMO_PROCESS_H_
+#pragma once
 
-// #define TIMING_DISABLED // if you don't need to print the time used, uncomment this line of code
+#include <string>
+#include <vector>
 
-#include "rknn_api.h"
-#include "easy_timer.h"
+#include "audio_utils.h"
 
-#define VOCAB_NUM 51865
-#define MAX_TOKENS 12
-#define SAMPLE_RATE 16000
-#define N_FFT 400
-#define HOP_LENGTH 160
-#define CHUNK_LENGTH 20
-#define MAX_AUDIO_LENGTH CHUNK_LENGTH *SAMPLE_RATE
-#define N_MELS 80
-#define MELS_FILTERS_SIZE 201 // (N_FFT / 2 + 1)
-#define ENCODER_INPUT_SIZE CHUNK_LENGTH * 100
-#define ENCODER_OUTPUT_SIZE CHUNK_LENGTH * 50 * 512 // 384/512/1024 for tiny/base/medium models respectively
-#define DECODER_INPUT_SIZE ENCODER_OUTPUT_SIZE
+inline constexpr int kVocabSize = 51865;
+inline constexpr int kMaxTokens = 12;
+inline constexpr int kSampleRate = 16000;
+inline constexpr int kFftSize = 400;
+inline constexpr int kHopLength = 160;
+inline constexpr int kChunkLength = 20;
+inline constexpr int kMaxAudioLength = kChunkLength * kSampleRate;
+inline constexpr int kNumMels = 80;
+inline constexpr int kMelFilterSize = 201;
+inline constexpr int kEncoderInputSize = kChunkLength * 100;
+inline constexpr int kEncoderOutputSize = kChunkLength * 50 * 512;
+inline constexpr int kDecoderInputSize = kEncoderOutputSize;
+inline constexpr char kMelFiltersPath[] = "./model/mel_80_filters.txt";
 
-#define MEL_FILTERS_PATH "./model/mel_80_filters.txt"
-#define PI 3.14159265358979323846
-
-typedef struct
+struct VocabEntry
 {
-    int index;
-    char *token;
-} VocabEntry;
+    int index = 0;
+    char* token = nullptr;
+};
 
-void replace_substr(std::string &str, const std::string &from, const std::string &to);
-int read_vocab(const char *fileName, VocabEntry *vocab);
-int read_mel_filters(const char *fileName, float *data, int max_lines);
-void audio_preprocess(audio_buffer_t *audio, float *mel_filters, std::vector<float> &x_mel);
-int argmax(float *array);
-std::string base64_decode(const std::string &s);
-
-#endif //_RKNN_WHISPER_DEMO_PROCESS_H_
+void replaceSubstring(std::string& value, const std::string& from, const std::string& to);
+int readVocab(const char* fileName, VocabEntry* vocab);
+int readMelFilters(const char* fileName, float* data, int maxLines);
+void preprocessAudio(
+    AudioBuffer* audio,
+    const float* melFilters,
+    std::vector<float>& melSpectrogram);
+int argmax(const float* array);
+std::string decodeBase64(const std::string& encodedString);

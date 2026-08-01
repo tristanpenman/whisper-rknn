@@ -12,329 +12,311 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
 #include "whisper.h"
-#include "file_utils.h"
-#include "audio_utils.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
 #include <vector>
-#include "process.h"
 
-static void dump_tensor_attr(rknn_tensor_attr *attr)
+namespace {
+
+constexpr int kStartOfTranscriptToken = 50258;
+constexpr int kEndOfTextToken = 50257;
+constexpr int kTimestampBeginToken = 50364;
+constexpr int kChineseTaskToken = 50260;
+constexpr int kMaximumDecodeIterations = 1000;
+
+void dumpTensorAttribute(const rknn_tensor_attr* attribute)
 {
-    char dims_str[100];
-    char temp_str[100];
-    memset(dims_str, 0, sizeof(dims_str));
-    for (int i = 0; i < attr->n_dims; i++)
-    {
-        strcpy(temp_str, dims_str);
-        if (i == attr->n_dims - 1)
-        {
-            sprintf(dims_str, "%s%d", temp_str, attr->dims[i]);
-        }
-        else
-        {
-            sprintf(dims_str, "%s%d, ", temp_str, attr->dims[i]);
+    char dimensions[100] = {};
+    char previousDimensions[100] = {};
+    for (std::uint32_t i = 0; i < attribute->n_dims; ++i) {
+        std::strcpy(previousDimensions, dimensions);
+        if (i == attribute->n_dims - 1) {
+            std::snprintf(
+                dimensions,
+                sizeof(dimensions),
+                "%s%d",
+                previousDimensions,
+                attribute->dims[i]);
+        } else {
+            std::snprintf(
+                dimensions,
+                sizeof(dimensions),
+                "%s%d, ",
+                previousDimensions,
+                attribute->dims[i]);
         }
     }
 
-    printf("  index=%d, name=%s, n_dims=%d, dims=[%s], n_elems=%d, size=%d, fmt=%s, type=%s, qnt_type=%s, zp=%d, scale=%f\n",
-           attr->index, attr->name, attr->n_dims, dims_str, attr->n_elems, attr->size, get_format_string(attr->fmt),
-           get_type_string(attr->type), get_qnt_type_string(attr->qnt_type), attr->zp, attr->scale);
+    std::printf(
+        "  index=%d, name=%s, n_dims=%d, dims=[%s], n_elems=%d, size=%d, "
+        "fmt=%s, type=%s, qnt_type=%s, zp=%d, scale=%f\n",
+        attribute->index,
+        attribute->name,
+        attribute->n_dims,
+        dimensions,
+        attribute->n_elems,
+        attribute->size,
+        get_format_string(attribute->fmt),
+        get_type_string(attribute->type),
+        get_qnt_type_string(attribute->qnt_type),
+        attribute->zp,
+        attribute->scale);
 }
 
-int init_whisper_model(const char *model_path, rknn_app_context_t *app_ctx)
+int runEncoder(
+    RknnAppContext* appContext,
+    const std::vector<float>& audioData,
+    float* encoderOutput)
 {
-    int ret;
-    int model_len = 0;
-    rknn_context ctx = 0;
+    rknn_input inputs[1] = {};
+    rknn_output outputs[1] = {};
 
-    // Load RKNN Model
-    ret = rknn_init(&ctx, (void *)model_path, model_len, 0, NULL);
-    if (ret < 0)
-    {
-        printf("rknn_init fail! ret=%d\n", ret);
-        return -1;
-    }
-
-    // Get Model Input Output Number
-    rknn_input_output_num io_num;
-    ret = rknn_query(ctx, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
-    if (ret != RKNN_SUCC)
-    {
-        printf("rknn_query fail! ret=%d\n", ret);
-        return -1;
-    }
-    printf("model input num: %d, output num: %d\n", io_num.n_input, io_num.n_output);
-
-    // Get Model Input Info
-    printf("input tensors:\n");
-    rknn_tensor_attr input_attrs[io_num.n_input];
-    memset(input_attrs, 0, sizeof(input_attrs));
-    for (int i = 0; i < io_num.n_input; i++)
-    {
-        input_attrs[i].index = i;
-        ret = rknn_query(ctx, RKNN_QUERY_INPUT_ATTR, &(input_attrs[i]), sizeof(rknn_tensor_attr));
-        if (ret != RKNN_SUCC)
-        {
-            printf("rknn_query fail! ret=%d\n", ret);
-            return -1;
-        }
-        dump_tensor_attr(&(input_attrs[i]));
-    }
-
-    // Get Model Output Info
-    printf("output tensors:\n");
-    rknn_tensor_attr output_attrs[io_num.n_output];
-    memset(output_attrs, 0, sizeof(output_attrs));
-    for (int i = 0; i < io_num.n_output; i++)
-    {
-        output_attrs[i].index = i;
-        ret = rknn_query(ctx, RKNN_QUERY_OUTPUT_ATTR, &(output_attrs[i]), sizeof(rknn_tensor_attr));
-        if (ret != RKNN_SUCC)
-        {
-            printf("rknn_query fail! ret=%d\n", ret);
-            return -1;
-        }
-        dump_tensor_attr(&(output_attrs[i]));
-    }
-
-    // Set to context
-    app_ctx->rknn_ctx = ctx;
-    app_ctx->io_num = io_num;
-    app_ctx->input_attrs = (rknn_tensor_attr *)malloc(io_num.n_input * sizeof(rknn_tensor_attr));
-    memcpy(app_ctx->input_attrs, input_attrs, io_num.n_input * sizeof(rknn_tensor_attr));
-    app_ctx->output_attrs = (rknn_tensor_attr *)malloc(io_num.n_output * sizeof(rknn_tensor_attr));
-    memcpy(app_ctx->output_attrs, output_attrs, io_num.n_output * sizeof(rknn_tensor_attr));
-
-    return 0;
-}
-
-int release_whisper_model(rknn_app_context_t *app_ctx)
-{
-    if (app_ctx->input_attrs != NULL)
-    {
-        free(app_ctx->input_attrs);
-        app_ctx->input_attrs = NULL;
-    }
-    if (app_ctx->output_attrs != NULL)
-    {
-        free(app_ctx->output_attrs);
-        app_ctx->output_attrs = NULL;
-    }
-    if (app_ctx->rknn_ctx != 0)
-    {
-        rknn_destroy(app_ctx->rknn_ctx);
-        app_ctx->rknn_ctx = 0;
-    }
-    return 0;
-}
-
-int inference_encoder_model(rknn_app_context_t *app_ctx, std::vector<float> audio_data, float *mel_filters, float *encoder_output)
-{
-    int ret;
-
-    rknn_input inputs[1];
-    rknn_output outputs[1];
-
-    memset(inputs, 0, sizeof(inputs));
-    memset(outputs, 0, sizeof(outputs));
-
-    // Set Input Data
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_FLOAT32;
-    inputs[0].size = N_MELS * ENCODER_INPUT_SIZE * sizeof(float);
-    inputs[0].buf = (float *)malloc(inputs[0].size);
-    memcpy(inputs[0].buf, audio_data.data(), inputs[0].size);
+    inputs[0].size = kNumMels * kEncoderInputSize * sizeof(float);
+    inputs[0].buf = std::malloc(inputs[0].size);
+    std::memcpy(inputs[0].buf, audioData.data(), inputs[0].size);
 
-    ret = rknn_inputs_set(app_ctx->rknn_ctx, 1, inputs);
-    if (ret < 0)
-    {
-        printf("rknn_input_set fail! ret=%d\n", ret);
-        goto out;
+    int result = rknn_inputs_set(appContext->rknnContext, 1, inputs);
+    if (result < 0) {
+        std::printf("rknn_inputs_set failed: %d\n", result);
+        goto cleanup;
     }
 
-    // Run
-    ret = rknn_run(app_ctx->rknn_ctx, nullptr);
-    if (ret < 0)
-    {
-        printf("rknn_run fail! ret=%d\n", ret);
-        goto out;
+    result = rknn_run(appContext->rknnContext, nullptr);
+    if (result < 0) {
+        std::printf("rknn_run failed: %d\n", result);
+        goto cleanup;
     }
 
-    // Get Output
     outputs[0].want_float = 1;
-    ret = rknn_outputs_get(app_ctx->rknn_ctx, 1, outputs, NULL);
-    if (ret < 0)
-    {
-        printf("rknn_outputs_get fail! ret=%d\n", ret);
-        goto out;
+    result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
+    if (result < 0) {
+        std::printf("rknn_outputs_get failed: %d\n", result);
+        goto cleanup;
     }
 
-    memcpy(encoder_output, (float *)outputs[0].buf, ENCODER_OUTPUT_SIZE * sizeof(float));
+    std::memcpy(encoderOutput, outputs[0].buf, kEncoderOutputSize * sizeof(float));
 
-out:
-
-    // Remeber to release rknn output
-    rknn_outputs_release(app_ctx->rknn_ctx, 1, outputs);
-    if (inputs[0].buf != NULL)
-    {
-        free(inputs[0].buf);
-    }
-
-    return ret;
+cleanup:
+    rknn_outputs_release(appContext->rknnContext, 1, outputs);
+    std::free(inputs[0].buf);
+    return result;
 }
 
-int inference_decoder_model(rknn_app_context_t *app_ctx, float *encoder_output, VocabEntry *vocab, int task_code, std::vector<std::string> &recognized_text)
+int runDecoder(
+    RknnAppContext* appContext,
+    const float* encoderOutput,
+    const VocabEntry* vocab,
+    int taskCode,
+    std::vector<std::string>& recognizedText)
 {
-    int ret;
-    rknn_input inputs[2];
-    rknn_output outputs[1];
+    rknn_input inputs[2] = {};
+    rknn_output outputs[1] = {};
 
-    memset(inputs, 0, sizeof(inputs));
-    memset(outputs, 0, sizeof(outputs));
-
-    // Set Input Data
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_INT64;
-    inputs[0].size = MAX_TOKENS * sizeof(int64_t);
-    inputs[0].buf = (int64_t *)malloc(inputs[0].size);
+    inputs[0].size = kMaxTokens * sizeof(std::int64_t);
+    inputs[0].buf = std::malloc(inputs[0].size);
 
     inputs[1].index = 1;
     inputs[1].type = RKNN_TENSOR_FLOAT32;
-    inputs[1].size = DECODER_INPUT_SIZE * sizeof(float);
-    inputs[1].buf = (float *)malloc(inputs[1].size);
-    memcpy(inputs[1].buf, encoder_output, inputs[1].size);
+    inputs[1].size = kDecoderInputSize * sizeof(float);
+    inputs[1].buf = std::malloc(inputs[1].size);
+    std::memcpy(inputs[1].buf, encoderOutput, inputs[1].size);
 
-    int64_t tokens[MAX_TOKENS + 1] = {50258, task_code, 50359, 50363}; // tokenizer.sot_sequence_including_notimestamps
-    int timestamp_begin = 50364;                                       // tokenizer.timestamp_begin
-    int next_token = 50258;                                            // tokenizer.sot
-    int end_token = 50257;                                             // tokenizer.eot
-    int pop_id = MAX_TOKENS;
+    std::int64_t tokens[kMaxTokens + 1] = {
+        kStartOfTranscriptToken,
+        taskCode,
+        50359,
+        50363
+    };
+    int nextToken = kStartOfTranscriptToken;
+    int firstMutableToken = kMaxTokens;
+    int iterationCount = 0;
+    std::string decodedTokens;
 
-    int count = 0; // Avoid getting stuck in a decode loop
-    std::string all_token_str = "";
-
-    for (int i = 0; i < MAX_TOKENS / 4; i++)
-    {
-        memcpy(&tokens[i * 4], tokens, 4 * sizeof(int64_t));
+    for (int i = 0; i < kMaxTokens / 4; ++i) {
+        std::memcpy(&tokens[i * 4], tokens, 4 * sizeof(std::int64_t));
     }
 
-    while (next_token != end_token && count < 1000)
-    {
-        count++;
+    int result = 0;
+    while (nextToken != kEndOfTextToken && iterationCount < kMaximumDecodeIterations) {
+        ++iterationCount;
+        std::memcpy(inputs[0].buf, tokens, inputs[0].size);
 
-        memcpy(inputs[0].buf, tokens, inputs[0].size);
-
-        ret = rknn_inputs_set(app_ctx->rknn_ctx, 2, inputs);
-        if (ret < 0)
-        {
-            printf("rknn_input_set fail! ret=%d\n", ret);
-            goto out;
+        result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
+        if (result < 0) {
+            std::printf("rknn_inputs_set failed: %d\n", result);
+            goto cleanup;
         }
 
-        // Run
-        ret = rknn_run(app_ctx->rknn_ctx, nullptr);
-        if (ret < 0)
-        {
-            printf("rknn_run fail! ret=%d\n", ret);
-            goto out;
+        result = rknn_run(appContext->rknnContext, nullptr);
+        if (result < 0) {
+            std::printf("rknn_run failed: %d\n", result);
+            goto cleanup;
         }
 
-        // Get Output
         outputs[0].want_float = 1;
-        ret = rknn_outputs_get(app_ctx->rknn_ctx, 1, outputs, NULL);
-        if (ret < 0)
-        {
-            printf("rknn_outputs_get fail! ret=%d\n", ret);
-            goto out;
+        result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
+        if (result < 0) {
+            std::printf("rknn_outputs_get failed: %d\n", result);
+            goto cleanup;
         }
 
-        next_token = argmax((float *)outputs[0].buf);
+        nextToken = argmax(static_cast<const float*>(outputs[0].buf));
+        decodedTokens += vocab[nextToken].token;
 
-        std::string next_token_str = vocab[next_token].token;
-        all_token_str += next_token_str;
+        if (nextToken <= kTimestampBeginToken) {
+            if (firstMutableToken > 4) {
+                --firstMutableToken;
+            }
 
-        if (next_token > timestamp_begin)
-        {
-            continue;
-        }
-        if (pop_id > 4)
-        {
-            pop_id--;
-        }
-
-        tokens[MAX_TOKENS] = next_token;
-
-        for (int j = pop_id; j < MAX_TOKENS; j++)
-        {
-            tokens[j] = tokens[j + 1];
+            tokens[kMaxTokens] = nextToken;
+            for (int i = firstMutableToken; i < kMaxTokens; ++i) {
+                tokens[i] = tokens[i + 1];
+            }
         }
 
-        // Remeber to release rknn output
-        rknn_outputs_release(app_ctx->rknn_ctx, 1, outputs);
+        rknn_outputs_release(appContext->rknnContext, 1, outputs);
+        outputs[0].buf = nullptr;
     }
 
-    replace_substr(all_token_str, "\u0120", " ");
-    replace_substr(all_token_str, "<|endoftext|>", "");
-    replace_substr(all_token_str, "\n", "");
+    replaceSubstring(decodedTokens, "\u0120", " ");
+    replaceSubstring(decodedTokens, "<|endoftext|>", "");
+    replaceSubstring(decodedTokens, "\n", "");
 
-    if (all_token_str.size())
-    {
-        if (task_code == 50260) // TASK_FOR_ZH
-        {
-            all_token_str = base64_decode(all_token_str);
+    if (!decodedTokens.empty()) {
+        if (taskCode == kChineseTaskToken) {
+            decodedTokens = decodeBase64(decodedTokens);
         }
-
-        recognized_text.push_back(all_token_str);
+        recognizedText.push_back(decodedTokens);
     }
 
-out:
-    for (int i = 0; i < 2; i++)
-    {
-        if (inputs[i].buf != NULL)
-        {
-            free(inputs[i].buf);
-        }
-    }
-
-    return ret;
+cleanup:
+    std::free(inputs[0].buf);
+    std::free(inputs[1].buf);
+    return result;
 }
 
-int inference_whisper_model(rknn_whisper_context_t *app_ctx, std::vector<float> audio_data, float *mel_filters, VocabEntry *vocab, int task_code, std::vector<std::string> &recognized_text)
+}  // namespace
+
+int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
 {
-    int ret;
-    // TIMER timer;
-    float *encoder_output = (float *)malloc(ENCODER_OUTPUT_SIZE * sizeof(float));
-    recognized_text.clear();
-
-    // timer.tik();
-    ret = inference_encoder_model(&app_ctx->encoder_context, audio_data, mel_filters, encoder_output);
-    if (ret != 0)
-    {
-        printf("inference_encoder_model fail! ret=%d\n", ret);
-        goto out;
-    }
-    // timer.tok();
-    // timer.print_time("inference_encoder_model");
-
-    // timer.tik();
-    ret = inference_decoder_model(&app_ctx->decoder_context, encoder_output, vocab, task_code, recognized_text);
-    if (ret != 0)
-    {
-        printf("inference_decoder_model fail! ret=%d\n", ret);
-        goto out;
-    }
-    // timer.tok();
-    // timer.print_time("inference_decoder_model");
-
-out:
-    if (encoder_output != NULL)
-    {
-        free(encoder_output);
+    rknn_context context = 0;
+    int result = rknn_init(&context, const_cast<char*>(modelPath), 0, 0, nullptr);
+    if (result < 0) {
+        std::printf("rknn_init failed: %d\n", result);
+        return -1;
     }
 
-    return ret;
+    rknn_input_output_num ioCount = {};
+    result = rknn_query(context, RKNN_QUERY_IN_OUT_NUM, &ioCount, sizeof(ioCount));
+    if (result != RKNN_SUCC) {
+        std::printf("rknn_query failed: %d\n", result);
+        rknn_destroy(context);
+        return -1;
+    }
+    std::printf("model input count: %d, output count: %d\n", ioCount.n_input, ioCount.n_output);
+
+    std::vector<rknn_tensor_attr> inputAttributes(ioCount.n_input);
+    std::printf("input tensors:\n");
+    for (std::uint32_t i = 0; i < ioCount.n_input; ++i) {
+        inputAttributes[i].index = i;
+        result = rknn_query(
+            context,
+            RKNN_QUERY_INPUT_ATTR,
+            &inputAttributes[i],
+            sizeof(rknn_tensor_attr));
+        if (result != RKNN_SUCC) {
+            std::printf("rknn_query failed: %d\n", result);
+            rknn_destroy(context);
+            return -1;
+        }
+        dumpTensorAttribute(&inputAttributes[i]);
+    }
+
+    std::vector<rknn_tensor_attr> outputAttributes(ioCount.n_output);
+    std::printf("output tensors:\n");
+    for (std::uint32_t i = 0; i < ioCount.n_output; ++i) {
+        outputAttributes[i].index = i;
+        result = rknn_query(
+            context,
+            RKNN_QUERY_OUTPUT_ATTR,
+            &outputAttributes[i],
+            sizeof(rknn_tensor_attr));
+        if (result != RKNN_SUCC) {
+            std::printf("rknn_query failed: %d\n", result);
+            rknn_destroy(context);
+            return -1;
+        }
+        dumpTensorAttribute(&outputAttributes[i]);
+    }
+
+    appContext->rknnContext = context;
+    appContext->ioCount = ioCount;
+    appContext->inputAttributes = static_cast<rknn_tensor_attr*>(
+        std::malloc(ioCount.n_input * sizeof(rknn_tensor_attr)));
+    std::memcpy(
+        appContext->inputAttributes,
+        inputAttributes.data(),
+        ioCount.n_input * sizeof(rknn_tensor_attr));
+    appContext->outputAttributes = static_cast<rknn_tensor_attr*>(
+        std::malloc(ioCount.n_output * sizeof(rknn_tensor_attr)));
+    std::memcpy(
+        appContext->outputAttributes,
+        outputAttributes.data(),
+        ioCount.n_output * sizeof(rknn_tensor_attr));
+    return 0;
+}
+
+int releaseWhisperModel(RknnAppContext* appContext)
+{
+    std::free(appContext->inputAttributes);
+    appContext->inputAttributes = nullptr;
+    std::free(appContext->outputAttributes);
+    appContext->outputAttributes = nullptr;
+
+    if (appContext->rknnContext != 0) {
+        rknn_destroy(appContext->rknnContext);
+        appContext->rknnContext = 0;
+    }
+    return 0;
+}
+
+int runWhisperInference(
+    RknnWhisperContext* appContext,
+    const std::vector<float>& audioData,
+    const VocabEntry* vocab,
+    int taskCode,
+    std::vector<std::string>& recognizedText)
+{
+    auto* encoderOutput = static_cast<float*>(
+        std::malloc(kEncoderOutputSize * sizeof(float)));
+    recognizedText.clear();
+
+    int result = runEncoder(&appContext->encoderContext, audioData, encoderOutput);
+    if (result != 0) {
+        std::printf("Encoder inference failed: %d\n", result);
+        std::free(encoderOutput);
+        return result;
+    }
+
+    result = runDecoder(
+        &appContext->decoderContext,
+        encoderOutput,
+        vocab,
+        taskCode,
+        recognizedText);
+    if (result != 0) {
+        std::printf("Decoder inference failed: %d\n", result);
+    }
+
+    std::free(encoderOutput);
+    return result;
 }
