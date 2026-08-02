@@ -112,7 +112,7 @@ def base64_decode(encoded_string):
 
 
 def read_vocab(vocab_path):
-    with open(vocab_path, "r") as vocab_file:
+    with open(vocab_path, "r", encoding="utf-8") as vocab_file:
         vocab = {}
         for line in vocab_file:
             if len(line.strip().split(" ")) < 2:
@@ -162,20 +162,20 @@ def log_mel_spectrogram(audio, n_mels, padding=0):
 
 def run_encoder(encoder_model, in_encoder):
     if "rknn" in str(type(encoder_model)):
-        out_encoder = encoder_model.inference(inputs=in_encoder)[0]
-    elif "onnx" in str(type(encoder_model)):
-        out_encoder = encoder_model.run(None, {"x": in_encoder})[0]
+        return encoder_model.inference(inputs=in_encoder)[0]
+    if "onnx" in str(type(encoder_model)):
+        return encoder_model.run(None, {"x": in_encoder})[0]
 
-    return out_encoder
+    raise TypeError(f"Unsupported encoder model: {type(encoder_model)}")
 
 
 def _decode(decoder_model, tokens, out_encoder):
     if "rknn" in str(type(decoder_model)):
-        out_decoder = decoder_model.inference(
+        return decoder_model.inference(
             [np.asarray([tokens], dtype="int64"), out_encoder]
         )[0]
-    elif "onnx" in str(type(decoder_model)):
-        out_decoder = decoder_model.run(
+    if "onnx" in str(type(decoder_model)):
+        return decoder_model.run(
             None,
             {
                 "tokens": np.asarray([tokens], dtype="int64"),
@@ -183,7 +183,7 @@ def _decode(decoder_model, tokens, out_encoder):
             },
         )[0]
 
-    return out_decoder
+    raise TypeError(f"Unsupported decoder model: {type(decoder_model)}")
 
 
 def run_decoder(decoder_model, out_encoder, vocab, task_code):
@@ -270,7 +270,7 @@ def release_model(model):
 
 
 def load_array_from_file(filename):
-    with open(filename, "r") as file:
+    with open(filename, "r", encoding="utf-8") as file:
         data = file.readlines()
 
     array = []

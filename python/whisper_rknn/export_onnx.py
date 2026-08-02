@@ -31,6 +31,8 @@ def setup_data(model, n_mels):
 def simplify_onnx_model(model_path):
     original_model = onnx.load(model_path)
     simplified_model, check = simplify(original_model)
+    if not check:
+        raise RuntimeError(f"Failed to validate simplified model: {model_path}")
     onnx.save(simplified_model, model_path)
 
 
