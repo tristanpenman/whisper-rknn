@@ -25,9 +25,6 @@
 #include <vector>
 
 #include <fftw3.h>
-#include <opencv2/opencv.hpp>
-
-#define ENABLE_NEON 1
 
 #if ENABLE_NEON
 #include <arm_neon.h>
@@ -263,22 +260,31 @@ void multiplyMatricesNeon(
     }
 }
 #else
-void multiplyMatricesOpenCv(
-    float* left,
-    float* right,
+void multiplyMatricesScalar(
+    const float* left,
+    const float* right,
     std::vector<float>& output,
     int leftRows,
     int sharedColumns,
     int rightColumns)
 {
-    cv::Mat leftMatrix(leftRows, sharedColumns, CV_32F, left);
-    cv::Mat rightMatrix(sharedColumns, rightColumns, CV_32F, right);
-    cv::Mat outputMatrix(leftRows, rightColumns, CV_32F);
-    cv::gemm(leftMatrix, rightMatrix, 1.0, cv::Mat(), 0.0, outputMatrix);
-    std::memcpy(
-        output.data(),
-        outputMatrix.data,
-        leftRows * rightColumns * sizeof(float));
+    std::fill(output.begin(), output.end(), 0.0f);
+
+    for (int row = 0; row < leftRows; ++row) {
+        float* outputRow = output.data() + row * rightColumns;
+
+        for (int shared = 0; shared < sharedColumns; ++shared) {
+            const float weight = left[row * sharedColumns + shared];
+            if (weight == 0.0f) {
+                continue;
+            }
+
+            const float* rightRow = right + shared * rightColumns;
+            for (int column = 0; column < rightColumns; ++column) {
+                outputRow[column] += weight * rightRow[column];
+            }
+        }
+    }
 }
 #endif
 
@@ -336,7 +342,7 @@ void computeLogMelSpectrogram(
         kMelFilterSize,
         melColumns);
 #else
-    multiplyMatricesOpenCv(
+    multiplyMatricesScalar(
         filters,
         magnitudes.data(),
         melSpectrogram,

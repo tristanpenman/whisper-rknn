@@ -80,11 +80,10 @@ This project targets Rockchip Linux and Android devices based on the RK3588. CMa
 | RKNN Runtime                | Loads and runs the encoder and decoder on the NPU.  |
 | libsndfile                  | Reads audio files into floating-point sample data.  |
 | FFTW                        | Computes the short-time Fourier transform.          |
-| OpenCV                      | Supports preprocessing operations.                  |
 | JSON for Modern C++         | Shared JSON dependency for ongoing development.     |
 | GoogleTest                  | Builds the native unit-test executable.             |
 
-RKNN, libsndfile, and FFTW are provided under `thirdparty/`. OpenCV, JSON for Modern C++, and GoogleTest are fetched by CMake while configuring the build.
+RKNN, libsndfile, and FFTW are provided under `thirdparty/`. JSON for Modern C++ and GoogleTest are fetched by CMake while configuring the build.
 
 ## Models and Data
 
@@ -192,7 +191,6 @@ The following cache variables can be used when extending or adapting the build:
 |------------------------------|--------------------------------|--------------------------------------------------|
 | `RKNN_INCLUDE_DIR`           | Bundled RKNN include directory | Directory containing `rknn_api.h`.               |
 | `RKNN_RUNTIME_LIB`           | Bundled target runtime         | Path to the target's `librknnrt.so`.             |
-| `WHISPER_RKNN_ENABLE_OPENCV` | `ON`                           | Fetch and link OpenCV.                           |
 | `ENABLE_ASAN`                | unset                          | Enable AddressSanitizer flags for debug builds.  |
 
 ## Development Status

@@ -36,8 +36,6 @@ endif ()
 # build config
 # -----------------------------------------------------------------------------
 
-option(WHISPER_RKNN_ENABLE_OPENCV "Fetch and link OpenCV as a third-party dependency" ON)
-
 if(ANDROID)
     set(WHISPER_RKNN_ARCH ${CMAKE_ANDROID_ARCH_ABI})
 else()
@@ -46,14 +44,6 @@ else()
     else()
         set(WHISPER_RKNN_ARCH armhf)
     endif()
-endif()
-
-# -----------------------------------------------------------------------------
-# OpenCV
-# -----------------------------------------------------------------------------
-
-if(WHISPER_RKNN_ENABLE_OPENCV)
-    include(cmake/OpenCV.cmake)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -119,6 +109,12 @@ add_executable(whisper_rknn
     cpp/src/whisper.cc
 )
 
+if(WHISPER_RKNN_ARCH STREQUAL "aarch64" OR WHISPER_RKNN_ARCH STREQUAL "arm64-v8a")
+    target_compile_definitions(whisper_rknn PRIVATE ENABLE_NEON=1)
+else()
+    target_compile_definitions(whisper_rknn PRIVATE ENABLE_NEON=0)
+endif()
+
 target_include_directories(whisper_rknn PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIBFFTW_INCLUDES}
@@ -133,15 +129,6 @@ target_link_libraries(whisper_rknn
     ${LIBSNDFILE}
     nlohmann_json::nlohmann_json
 )
-
-if(WHISPER_RKNN_ENABLE_OPENCV)
-    target_include_directories(whisper_rknn PRIVATE
-        ${WHISPER_RKNN_OPENCV_INCLUDE_DIRS}
-    )
-    target_link_libraries(whisper_rknn
-        ${WHISPER_RKNN_OPENCV_TARGETS}
-    )
-endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(whisper_rknn
