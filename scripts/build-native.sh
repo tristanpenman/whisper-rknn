@@ -22,4 +22,4 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -G Ninja \
   -DBUILD_TESTING=ON
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
-echo "Native Rockchip Linux build finished: ${BUILD_DIR}/whisper_rknn"
+echo "Native Rockchip Linux build finished: ${BUILD_DIR}/whisper-rknn"

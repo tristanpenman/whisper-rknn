@@ -59,4 +59,4 @@ cmake -S "${ROOT_DIR}" -B "${BUILD_DIR}" -G Ninja \
 
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
-echo "Android build finished: ${BUILD_DIR}/vlm-rknn"
+echo "Android build finished: ${BUILD_DIR}/whisper-rknn"

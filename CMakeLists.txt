@@ -99,7 +99,7 @@ set(LIBFFTW ${LIBFFTW_PATH}/${CMAKE_SYSTEM_NAME}/${WHISPER_RKNN_ARCH}/libfftw3f.
 # whisper_rknn
 # -----------------------------------------------------------------------------
 
-add_executable(whisper_rknn
+add_executable(whisper-rknn
     cpp/src/audio_utils.cc
     cpp/src/file_utils.cc
     cpp/src/logger.cc
@@ -110,12 +110,12 @@ add_executable(whisper_rknn
 )
 
 if(WHISPER_RKNN_ARCH STREQUAL "aarch64" OR WHISPER_RKNN_ARCH STREQUAL "arm64-v8a")
-    target_compile_definitions(whisper_rknn PRIVATE ENABLE_NEON=1)
+    target_compile_definitions(whisper-rknn PRIVATE ENABLE_NEON=1)
 else()
-    target_compile_definitions(whisper_rknn PRIVATE ENABLE_NEON=0)
+    target_compile_definitions(whisper-rknn PRIVATE ENABLE_NEON=0)
 endif()
 
-target_include_directories(whisper_rknn PRIVATE
+target_include_directories(whisper-rknn PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIBFFTW_INCLUDES}
     ${LIBSNDFILE_INCLUDES}
@@ -123,7 +123,7 @@ target_include_directories(whisper_rknn PRIVATE
     ${RKNN_INCLUDE_DIR}
 )
 
-target_link_libraries(whisper_rknn
+target_link_libraries(whisper-rknn
     ${RKNN_RUNTIME_LIB}
     ${LIBFFTW}
     ${LIBSNDFILE}
@@ -131,9 +131,9 @@ target_link_libraries(whisper_rknn
 )
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
-    target_link_libraries(whisper_rknn
-    log
-)
+    target_link_libraries(whisper-rknn
+        log
+    )
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -141,11 +141,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # links PIE executables by default, so explicitly request a non-PIE link.
     include(CheckPIESupported)
     check_pie_supported(LANGUAGES CXX)
-    set_target_properties(whisper_rknn PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+    set_target_properties(whisper-rknn PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
-    target_link_libraries(whisper_rknn Threads::Threads)
+    target_link_libraries(whisper-rknn Threads::Threads)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -165,18 +165,18 @@ if(BUILD_TESTING AND NOT ANDROID)
     )
     FetchContent_MakeAvailable(googletest)
 
-    add_executable(whisper_rknn_tests
+    add_executable(whisper-rknn-tests
         cpp/src/file_utils.cc
         cpp/src/logger.cc
         cpp/tests/file_utils_test.cc
     )
 
-    target_link_libraries(whisper_rknn_tests PRIVATE
+    target_link_libraries(whisper-rknn-tests PRIVATE
         GTest::gtest_main
         nlohmann_json::nlohmann_json
     )
 
-    target_include_directories(whisper_rknn_tests PRIVATE
+    target_include_directories(whisper-rknn-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/cpp/src
     )
 endif()
