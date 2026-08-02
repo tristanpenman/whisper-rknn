@@ -1,18 +1,11 @@
 import argparse
-import importlib
-import sys
 import warnings
-from pathlib import Path
 
 import numpy as np
 import onnx
 import torch
+import whisper
 from onnxsim import simplify
-
-
-SCRIPT_DIR = str(Path(__file__).resolve().parent)
-sys.path = [path for path in sys.path if path != SCRIPT_DIR]
-whisper = importlib.import_module("whisper")
 
 warnings.filterwarnings("ignore", category=UserWarning)
 

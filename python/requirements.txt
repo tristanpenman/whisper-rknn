@@ -1,0 +1,9 @@
+numpy
+onnx
+onnxruntime
+onnxsim
+openai-whisper==20231117
+rknn-toolkit2
+scipy
+soundfile
+torch
