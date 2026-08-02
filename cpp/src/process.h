@@ -25,7 +25,6 @@ struct VocabEntry
     std::string token;
 };
 
-void replaceSubstring(std::string& value, const std::string& from, const std::string& to);
 int readVocab(const char* fileName, VocabEntry* vocab);
 int readMelFilters(const char* fileName, float* data, int maxLines);
 void preprocessAudio(
@@ -33,4 +32,3 @@ void preprocessAudio(
     const float* melFilters,
     std::vector<float>& melSpectrogram);
 int argmax(const float* array);
-std::string decodeBase64(const std::string& encodedString);

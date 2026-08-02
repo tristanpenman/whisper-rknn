@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "rknn_utils.h"
+#include "string_utils.h"
 
 namespace {
 

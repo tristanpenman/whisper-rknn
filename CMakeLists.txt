@@ -106,6 +106,7 @@ add_executable(whisper-rknn
     cpp/src/main.cc
     cpp/src/process.cc
     cpp/src/rknn_utils.cc
+    cpp/src/string_utils.cc
     cpp/src/whisper.cc
 )
 
@@ -168,7 +169,9 @@ if(BUILD_TESTING AND NOT ANDROID)
     add_executable(whisper-rknn-tests
         cpp/src/file_utils.cc
         cpp/src/logger.cc
+        cpp/src/string_utils.cc
         cpp/tests/file_utils_test.cc
+        cpp/tests/string_utils_test.cc
     )
 
     target_link_libraries(whisper-rknn-tests PRIVATE
@@ -179,6 +182,10 @@ if(BUILD_TESTING AND NOT ANDROID)
     target_include_directories(whisper-rknn-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/cpp/src
     )
+
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        set_target_properties(whisper-rknn-tests PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+    endif()
 endif()
 
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
