@@ -140,8 +140,10 @@ export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 The CLI accepts the encoder, decoder, transcription task, and input audio path as positional arguments:
 
 ```text
-./whisper_rknn <encoder_path> <decoder_path> <task> <audio_path>
+./whisper-rknn [--disable-neon] <encoder_path> <decoder_path> <task> <audio_path>
 ```
+
+Pass `--disable-neon` to use the scalar Mel-spectrogram matrix multiplication implementation. This is useful for comparing its output with the default Arm NEON implementation.
 
 Supported tasks are:
 

@@ -35,15 +35,19 @@ constexpr int kChineseTaskCode = 50260;
 
 int main(int argc, char** argv)
 {
-    if (argc != 5) {
-        std::printf("%s <encoder_path> <decoder_path> <task> <audio_path>\n", argv[0]);
+    const bool enableNeon = argc < 2 || std::strcmp(argv[1], "--disable-neon") != 0;
+    const int argumentOffset = enableNeon ? 0 : 1;
+    if (argc != 5 + argumentOffset) {
+        std::printf(
+            "%s [--disable-neon] <encoder_path> <decoder_path> <task> <audio_path>\n",
+            argv[0]);
         return -1;
     }
 
-    const char* encoderPath = argv[1];
-    const char* decoderPath = argv[2];
-    const char* task = argv[3];
-    const char* audioPath = argv[4];
+    const char* encoderPath = argv[1 + argumentOffset];
+    const char* decoderPath = argv[2 + argumentOffset];
+    const char* task = argv[3 + argumentOffset];
+    const char* audioPath = argv[4 + argumentOffset];
     const char* vocabPath = nullptr;
     int taskCode = 0;
 
@@ -140,7 +144,7 @@ int main(int argc, char** argv)
     timer.printTime("Initialize Whisper decoder");
 
     timer.tik();
-    preprocessAudio(&audio, melFilters.data(), audioData);
+    preprocessAudio(&audio, melFilters.data(), audioData, enableNeon);
     result = runWhisperInference(
         &appContext,
         audioData,

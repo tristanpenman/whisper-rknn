@@ -30,5 +30,14 @@ int readMelFilters(const char* fileName, float* data, int maxLines);
 void preprocessAudio(
     AudioBuffer* audio,
     const float* melFilters,
-    std::vector<float>& melSpectrogram);
+    std::vector<float>& melSpectrogram,
+    bool enableNeon = true);
+void multiplyMatrices(
+    const float* left,
+    const float* right,
+    std::vector<float>& output,
+    int leftRows,
+    int sharedColumns,
+    int rightColumns,
+    bool enableNeon);
 int argmax(const float* array);

@@ -255,7 +255,8 @@ void multiplyMatricesNeon(
         }
     }
 }
-#else
+#endif
+
 void multiplyMatricesScalar(
     const float* left,
     const float* right,
@@ -282,14 +283,14 @@ void multiplyMatricesScalar(
         }
     }
 }
-#endif
 
 void computeLogMelSpectrogram(
     const float* audioData,
     int audioLength,
     int numStftFrames,
     const float* filters,
-    std::vector<float>& melSpectrogram)
+    std::vector<float>& melSpectrogram,
+    bool enableNeon)
 {
     std::vector<float> window(kFftSize);
     makeHannWindow(window, kFftSize);
@@ -329,23 +330,14 @@ void computeLogMelSpectrogram(
 
     constexpr int kMelRows = kNumMels;
     const int melColumns = numStftFrames - 1;
-#if ENABLE_NEON
-    multiplyMatricesNeon(
+    multiplyMatrices(
         filters,
         magnitudes.data(),
         melSpectrogram,
         kMelRows,
         kMelFilterSize,
-        melColumns);
-#else
-    multiplyMatricesScalar(
-        filters,
-        magnitudes.data(),
-        melSpectrogram,
-        kMelRows,
-        kMelFilterSize,
-        melColumns);
-#endif
+        melColumns,
+        enableNeon);
 
     clampAndNormalize(melSpectrogram, kMelRows, melColumns);
     fftwf_free(stftResult);
@@ -353,6 +345,27 @@ void computeLogMelSpectrogram(
 }
 
 }  // namespace
+
+void multiplyMatrices(
+    const float* left,
+    const float* right,
+    std::vector<float>& output,
+    int leftRows,
+    int sharedColumns,
+    int rightColumns,
+    bool enableNeon)
+{
+#if ENABLE_NEON
+    if (enableNeon) {
+        multiplyMatricesNeon(
+            left, right, output, leftRows, sharedColumns, rightColumns);
+        return;
+    }
+#else
+    (void)enableNeon;
+#endif
+    multiplyMatricesScalar(left, right, output, leftRows, sharedColumns, rightColumns);
+}
 
 int readMelFilters(const char* fileName, float* data, int maxLines)
 {
@@ -374,7 +387,8 @@ int readMelFilters(const char* fileName, float* data, int maxLines)
 void preprocessAudio(
     AudioBuffer* audio,
     const float* melFilters,
-    std::vector<float>& melSpectrogram)
+    std::vector<float>& melSpectrogram,
+    bool enableNeon)
 {
     const int audioLength = audio->numFrames;
     std::vector<float> originalAudioData(audio->data.begin(), audio->data.begin() + audioLength);
@@ -391,7 +405,8 @@ void preprocessAudio(
             kMaxAudioLength,
             numStftFrames,
             melFilters,
-            melSpectrogram);
+            melSpectrogram,
+            enableNeon);
         return;
     }
 
@@ -405,7 +420,8 @@ void preprocessAudio(
         audioLength,
         numStftFrames,
         melFilters,
-        currentMelSpectrogram);
+        currentMelSpectrogram,
+        enableNeon);
     padMelSpectrogram(
         currentMelSpectrogram,
         kMelRows,
