@@ -29,6 +29,7 @@ Streaming transcription, microphone input, Python tooling, and model conversion 
 * [Android](#android)
 * [CMake Configuration](#cmake-configuration)
 * [Development Status](#development-status)
+* [License](#license)
 
 ## Background
 
@@ -205,3 +206,9 @@ This repository is under active development. The current batch CLI establishes t
 * Android application integration.
 
 More detailed implementation notes are tracked in [`PLAN.md`](./PLAN.md) and under [`notes/`](./notes/).
+
+## License
+
+Except where otherwise noted, the source code in this repository is licensed under the [Apache License, Version 2.0](./LICENSE).
+
+Third-party components under `thirdparty/`, model files, datasets, and other externally sourced assets are not covered by this repository's Apache-2.0 license. They remain subject to their respective copyright notices and license terms. In particular, distributions that include or link the bundled RKNN Runtime, FFTW, or libsndfile components must comply with the applicable third-party terms.
