@@ -155,7 +155,7 @@ endif()
 
 include(CTest)
 
-if(BUILD_TESTING AND NOT ANDROID)
+if(BUILD_TESTING)
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
@@ -179,9 +179,11 @@ if(BUILD_TESTING AND NOT ANDROID)
     )
 
     target_link_libraries(whisper-rknn-tests PRIVATE
+        # The bundled Android FFTW archive contains a benchmark main object, so
+        # resolve main from GoogleTest before the linker examines that archive.
+        GTest::gtest_main
         ${LIBSNDFILE}
         ${LIBFFTW}
-        GTest::gtest_main
         nlohmann_json::nlohmann_json
     )
 
@@ -191,7 +193,7 @@ if(BUILD_TESTING AND NOT ANDROID)
         ${LIBFFTW_INCLUDES}
     )
 
-    if(WHISPER_RKNN_ARCH STREQUAL "aarch64")
+    if(WHISPER_RKNN_ARCH STREQUAL "aarch64" OR WHISPER_RKNN_ARCH STREQUAL "arm64-v8a")
         target_compile_definitions(whisper-rknn-tests PRIVATE ENABLE_NEON=1)
     else()
         target_compile_definitions(whisper-rknn-tests PRIVATE ENABLE_NEON=0)
