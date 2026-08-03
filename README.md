@@ -12,7 +12,7 @@ Current capabilities:
 * Log-Mel spectrogram preprocessing with FFTW and Arm NEON
 * Linux/aarch64 and Android/arm64-v8a builds
 
-Streaming transcription, microphone input, Python tooling, and model conversion are planned but are not yet implemented.
+Streaming transcription and microphone input are planned but are not yet implemented.
 
 ### Contents
 
@@ -23,6 +23,7 @@ Streaming transcription, microphone input, Python tooling, and model conversion 
   * [Layout](#layout)
   * [Dependencies](#dependencies)
 * [Models and Data](#models-and-data)
+  * [Model Conversion](#model-conversion)
 * [Linux CLI](#linux-cli)
   * [Build](#build)
   * [Run](#run)
@@ -43,7 +44,7 @@ This is presently a batch pipeline: the complete audio file is read before infer
 
 ### RKNN
 
-RKNN is Rockchip's model format and NPU inference runtime. The CLI expects a compatible encoder and decoder that have already been converted to `.rknn` files. Model conversion is not currently part of this repository.
+RKNN is Rockchip's model format and NPU inference runtime. The CLI expects a compatible encoder and decoder that have been converted to `.rknn` files. The repository provides scripts for downloading the supported ONNX models and converting them for the RK3588.
 
 The bundled runtime libraries target the following platforms:
 
@@ -104,7 +105,42 @@ The CLI also reads preprocessing and vocabulary data from paths relative to its 
 | `model/vocab_en.txt`         | English token vocabulary.       |
 | `model/vocab_zh.txt`         | Chinese token vocabulary.       |
 
-These assets and the converted RKNN models must be prepared separately. Run the executable from the repository root, or reproduce the same `model/` layout beside the working directory used on the target device.
+These data assets must be available alongside the converted RKNN models. Run the executable from the repository root, or reproduce the same `model/` layout beside the working directory used on the target device.
+
+### Model Conversion
+
+The repository provides helper scripts that download the supported Whisper base encoder and decoder in ONNX format and convert them to RKNN format. Run the scripts from the repository root. The conversion requires Docker with the Docker Compose plugin, while the download script requires `wget`.
+
+First, download the ONNX models:
+
+```bash
+./scripts/fetch-models.sh
+```
+
+The script downloads both models into `model/`:
+
+```text
+model/whisper_encoder_base_20s.onnx
+model/whisper_decoder_base_20s.onnx
+```
+
+Existing files at those paths are replaced when the script is run again.
+
+Convert the downloaded models with:
+
+```bash
+./scripts/convert-models.sh
+```
+
+This script builds the `python` Docker Compose service when necessary and runs the RKNN Toolkit conversion inside the container. It converts both models for `rk3588` devices without integer quantization and writes:
+
+```text
+model/whisper_encoder_base_20s.rknn
+model/whisper_decoder_base_20s.rknn
+```
+
+These output paths match the model names used by the CLI examples below. The conversion scripts do not create the Mel filter bank or vocabulary files, so `model/mel_80_filters.txt`, `model/vocab_en.txt`, and
+`model/vocab_zh.txt` must also be present before running the example app.
 
 ## Linux CLI
 
@@ -201,7 +237,7 @@ This repository is under active development. The current batch CLI establishes t
 
 * Microphone input and continuous transcription.
 * A streaming pipeline with incremental decoding.
-* Python model conversion and validation tools.
+* Broader model-conversion and validation tooling.
 * Broader test audio and decoder performance reporting.
 * Android application integration.
 
