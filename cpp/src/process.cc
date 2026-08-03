@@ -213,45 +213,27 @@ void multiplyMatricesNeon(
     int sharedColumns,
     int rightColumns)
 {
-    int firstNonZero = sharedColumns;
-    int lastNonZero = 0;
-
     for (int row = 0; row < leftRows; ++row) {
-        for (int shared = 0; shared < sharedColumns; ++shared) {
-            if (left[row * sharedColumns + shared] != 0.0f) {
-                firstNonZero = shared;
-                break;
-            }
-        }
-        for (int shared = sharedColumns - 1; shared > 0; --shared) {
-            if (left[row * sharedColumns + shared] != 0.0f) {
-                lastNonZero = shared;
-                break;
-            }
-        }
-
-        int nonZeroCount = lastNonZero - firstNonZero + 1;
-        if (nonZeroCount % 4 != 0) {
-            const int adjustment = 4 - nonZeroCount % 4;
-            if (firstNonZero > adjustment) {
-                firstNonZero -= adjustment;
-            } else if (lastNonZero < sharedColumns - adjustment) {
-                lastNonZero += adjustment;
-            }
-        }
-
-        for (int column = 0; column < rightColumns; ++column) {
+        int column = 0;
+        for (; column <= rightColumns - 4; column += 4) {
             float32x4_t total = vdupq_n_f32(0.0f);
-            for (int shared = firstNonZero; shared <= lastNonZero - 3; shared += 4) {
-                const float32x4_t leftValues =
-                    vld1q_f32(&left[row * sharedColumns + shared]);
-                const float32x4_t rightValues =
-                    vld1q_f32(&right[shared * rightColumns + column]);
-                total = vmlaq_f32(total, leftValues, rightValues);
+            for (int shared = 0; shared < sharedColumns; ++shared) {
+                const float weight = left[row * sharedColumns + shared];
+                if (weight != 0.0f) {
+                    const float32x4_t rightValues =
+                        vld1q_f32(&right[shared * rightColumns + column]);
+                    total = vmlaq_n_f32(total, rightValues, weight);
+                }
             }
-
-            const float32x2_t sum = vadd_f32(vget_high_f32(total), vget_low_f32(total));
-            output[row * rightColumns + column] = vget_lane_f32(sum, 0) + vget_lane_f32(sum, 1);
+            vst1q_f32(&output[row * rightColumns + column], total);
+        }
+        for (; column < rightColumns; ++column) {
+            float total = 0.0f;
+            for (int shared = 0; shared < sharedColumns; ++shared) {
+                total += left[row * sharedColumns + shared]
+                    * right[shared * rightColumns + column];
+            }
+            output[row * rightColumns + column] = total;
         }
     }
 }
