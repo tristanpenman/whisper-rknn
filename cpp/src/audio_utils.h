@@ -2,13 +2,13 @@
 
 #include <vector>
 
-typedef struct AudioBuffer
+struct AudioBuffer
 {
     std::vector<float> data;
     int numFrames = 0;
     int numChannels = 0;
     int sampleRate = 0;
-} AudioBuffer;
+};
 
 /** Reads an audio file into a buffer. */
 int readAudio(const char* path, AudioBuffer* audio);
