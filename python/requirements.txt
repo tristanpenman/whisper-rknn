@@ -1,9 +1,10 @@
 numpy
-onnx
+# RKNN Toolkit 2.3.2 still uses the legacy onnx.mapping API.
+onnx==1.18.0
 onnxruntime
 onnxsim
 openai-whisper==20231117
-rknn-toolkit2
+rknn-toolkit2==2.3.2
 scipy
 soundfile
 torch
