@@ -24,6 +24,9 @@ Streaming transcription and microphone input are planned but are not yet impleme
   * [Dependencies](#dependencies)
 * [Models and Data](#models-and-data)
   * [Model Conversion](#model-conversion)
+* [Python Implementation](#python-implementation)
+  * [Run the Python Demo](#run-the-python-demo)
+  * [Export ONNX Models](#export-onnx-models)
 * [Linux CLI](#linux-cli)
   * [Build](#build)
   * [Run](#run)
@@ -141,6 +144,77 @@ model/whisper_decoder_base_20s.rknn
 
 These output paths match the model names used by the CLI examples below. The conversion scripts do not create the Mel filter bank or vocabulary files, so `model/mel_80_filters.txt`, `model/vocab_en.txt`, and
 `model/vocab_zh.txt` must also be present before running the example app.
+
+## Python Implementation
+
+The `python/whisper_rknn/` package contains the Python reference implementation used to prepare and validate models before running the C++ CLI. It implements the same audio loading, mono conversion, 16 kHz resampling, log-Mel preprocessing, encoder inference, and iterative decoder inference as the C++ implementation.
+
+The Python implementation can run an ONNX encoder-decoder pair through ONNX Runtime on the host CPU. It can also load an RKNN pair through RKNN Toolkit when a compatible Rockchip target is available. Its preprocessing and tensor sizes are currently configured for an 80-Mel, 20-second Whisper model.
+
+The Python dependencies are installed in the `python` Docker Compose service. Start a shell in that environment from the repository root:
+
+```bash
+docker compose run --rm --remove-orphans --build python
+cd python
+```
+
+The commands below assume the current directory is `python/`. This is required because the implementation reads the Mel filter bank and vocabularies from `../model/`.
+
+### Run the Python Demo
+
+Run the downloaded ONNX models on the CPU with:
+
+```bash
+python -m whisper_rknn.whisper \
+  --encoder_model_path ../model/whisper_encoder_base_20s.onnx \
+  --decoder_model_path ../model/whisper_decoder_base_20s.onnx \
+  --task en \
+  --audio_path ../model/test_en.wav
+```
+
+To run converted RKNN models, provide the target platform:
+
+```bash
+python -m whisper_rknn.whisper \
+  --encoder_model_path ../model/whisper_encoder_base_20s.rknn \
+  --decoder_model_path ../model/whisper_decoder_base_20s.rknn \
+  --task en \
+  --audio_path ../model/test_en.wav \
+  --target rk3588
+```
+
+Use `--task zh` with `../model/test_zh.wav` for the bundled Chinese example. The RKNN workflow requires a compatible target accessible to RKNN Toolkit. Pass `--device_id <device-id>` when a specific connected device must be selected.
+
+### Export ONNX Models
+
+The `whisper_rknn.export_onnx` module exports separate Whisper encoder and decoder graphs and simplifies both graphs with ONNX Simplifier. For example:
+
+```bash
+python -m whisper_rknn.export_onnx --model_type base --n_mels 80
+```
+
+The exporter downloads the requested OpenAI Whisper checkpoint when it is not already cached, so the container must have network access on the first run. It writes the resulting pair to:
+
+```text
+model/whisper_encoder_base.onnx
+model/whisper_decoder_base.onnx
+```
+
+The paths above are relative to the repository root. Replace `base` with the value passed to `--model_type`. The `--n_mels` option defaults to `80`.
+
+After exporting a compatible 20-second base pair, rename the files to `whisper_encoder_base_20s.onnx` and `whisper_decoder_base_20s.onnx` if you want to convert them with `./scripts/convert-models.sh`. The conversion wrapper expects those names.
+
+OpenAI Whisper uses a 30-second audio window by default, so an unmodified installation produces 30-second ONNX graphs. To export the 20-second graphs expected by the current Python and C++ implementations, modify the installed `openai-whisper` package before running the exporter:
+
+1. In `whisper/audio.py`, change `CHUNK_LENGTH` from `30` to `20`.
+2. In `whisper/model.py`, remove or disable the encoder assertion that requires the audio tensor to have the full positional-embedding shape.
+3. In the same encoder method, replace the positional-embedding addition with a slice matching the input length:
+
+   ```python
+   x = (x + self.positional_embedding[-x.shape[1]:, :]).to(x.dtype)
+   ```
+
+The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require corresponding preprocessing and tensor-size changes. In particular, update `CHUNK_LENGTH` in `python/whisper_rknn/whisper.py`, and update `kChunkLength` and `kEncoderOutputSize` in `cpp/src/process.h`. The encoder width used by `kEncoderOutputSize` is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 
 ## Linux CLI
 
