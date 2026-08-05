@@ -18,7 +18,6 @@ mono, 16 kHz waveform
     | Hann windows + FFTW short-time Fourier transforms
     | power spectrum + Mel filter bank + log scaling
     | NEON accelerates CPU vector operations
-    | OpenCV provides the non-NEON matrix-multiplication fallback
     v
 80 x 2000 log-Mel spectrogram
     |
@@ -89,12 +88,6 @@ The active STFT path uses NEON intrinsics such as `vld1q_f32`, `vmulq_f32`, and 
 
 The source also contains scalar STFT code behind the disabled `#else` branch. `ENABLE_NEON` is currently a source-level macro, not a CMake option, so the checked-in executable is explicitly tied to a compiler and target that provide Arm NEON intrinsics.
 
-### OpenCV
-
-OpenCV's role is narrower than its presence in the build might suggest. The non-NEON branch of `computeLogMelSpectrogram()` wraps the Mel filter bank and power spectrum in `cv::Mat` objects and calls `cv::gemm()` for their matrix multiplication. It does not process images, load audio, compute the FFT, or run Whisper.
-
-With `ENABLE_NEON` currently set to 1, `multiplyMatricesOpenCv()` is excluded by preprocessing and the hand-written NEON multiplication is used instead. OpenCV is nevertheless enabled by default in [`CMakeLists.txt`](../CMakeLists.txt), fetched through [`cmake/OpenCV.cmake`](../cmake/OpenCV.cmake), included unconditionally by `process.cc`, and linked into the executable when `WHISPER_RKNN_ENABLE_OPENCV` is on. In other words, it is currently a compiled dependency that supplies the intended portable matrix-multiplication fallback, rather than an active part of the default runtime path.
-
 ## 3. Loading the encoder and decoder
 
 Whisper's learned neural network is split into two `.rknn` files. [`cpp/src/whisper.cc`](../cpp/src/whisper.cc) wraps both with the same `RknnAppContext`, while `RknnWhisperContext` in [`cpp/src/whisper.h`](../cpp/src/whisper.h) owns one context for the encoder and one for the decoder.
@@ -133,7 +126,6 @@ The pipeline deliberately divides work between general-purpose Arm CPU code and 
 | Stereo-to-mono conversion and linear resampling     | Project loops in `audio_utils.c`                 | CPU                            |
 | Windowing and Mel matrix arithmetic                 | NEON path in `process.cc`                        | Arm CPU SIMD                   |
 | Short-time Fourier transforms                       | FFTW single-precision API in `process.cc`        | CPU                            |
-| Mel matrix arithmetic when NEON is disabled         | OpenCV `cv::gemm()` fallback                     | CPU                            |
 | Whisper encoder and decoder transformer graphs      | RKNN models through `whisper.cc`                 | Rockchip execution runtime/NPU |
 | Greedy token selection and text assembly            | Project code in `process.cc` and `whisper.cc`    | CPU                            |
 
