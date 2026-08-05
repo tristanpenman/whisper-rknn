@@ -30,8 +30,10 @@ namespace {
 
 constexpr int kStartOfTranscriptToken = 50258;
 constexpr int kEndOfTextToken = 50257;
-constexpr int kTimestampBeginToken = 50364;
 constexpr int kChineseTaskToken = 50260;
+constexpr int kTranscribeToken = 50359;
+constexpr int kNoTimestampsToken = 50363;
+constexpr int kTimestampBeginToken = 50364;
 constexpr int kMaximumDecodeIterations = 1000;
 
 int runEncoder(
@@ -79,6 +81,7 @@ int runDecoder(
     const float* encoderOutput,
     const VocabEntry* vocab,
     int taskCode,
+    bool enableTimestamps,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
     rknn_input inputs[2] = {};
@@ -96,18 +99,15 @@ int runDecoder(
     inputs[1].size = encoderInput.size() * sizeof(float);
     inputs[1].buf = encoderInput.data();
 
-    std::int64_t tokens[kMaxTokens + 1] = {
-        kStartOfTranscriptToken,
-        taskCode,
-        50359,
-        50363
-    };
+    const std::array<std::int64_t, 4> initialPrompt = {kStartOfTranscriptToken, taskCode, kTranscribeToken, kNoTimestampsToken};
+    const int initialPromptLength = enableTimestamps ? 3 : 4;
+    std::int64_t tokens[kMaxTokens + 1] = {};
     int nextToken = kStartOfTranscriptToken;
     int firstMutableToken = kMaxTokens;
     int iterationCount = 0;
 
-    for (int i = 0; i < kMaxTokens / 4; ++i) {
-        std::memcpy(&tokens[i * 4], tokens, 4 * sizeof(std::int64_t));
+    for (int i = 0; i < kMaxTokens; ++i) {
+        tokens[i] = initialPrompt[i % initialPromptLength];
     }
 
     int result = 0;
@@ -139,8 +139,8 @@ int runDecoder(
         transcriptionHypothesis.tokenIds.push_back(nextToken);
         transcriptionHypothesis.text += vocab[nextToken].token;
 
-        if (nextToken <= kTimestampBeginToken) {
-            if (firstMutableToken > 4) {
+        if (enableTimestamps || nextToken <= kTimestampBeginToken) {
+            if (firstMutableToken > initialPromptLength) {
                 --firstMutableToken;
             }
 
@@ -247,6 +247,7 @@ int runWhisperInference(
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
+    bool enableTimestamps,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
     std::vector<float> encoderOutput(kEncoderOutputSize);
@@ -266,6 +267,7 @@ int runWhisperInference(
         encoderOutput.data(),
         vocab,
         taskCode,
+        enableTimestamps,
         decodedHypothesis);
     if (result != 0) {
         std::printf("Decoder inference failed: %d\n", result);

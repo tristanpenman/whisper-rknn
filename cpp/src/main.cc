@@ -36,11 +36,25 @@ constexpr int kChineseTaskCode = 50260;
 
 int main(int argc, char** argv)
 {
-    const bool enableNeon = argc < 2 || std::strcmp(argv[1], "--disable-neon") != 0;
-    const int argumentOffset = enableNeon ? 0 : 1;
+    bool enableNeon = true;
+    bool enableTimestamps = false;
+    int argumentOffset = 0;
+    while (argumentOffset + 1 < argc) {
+        const char* argument = argv[argumentOffset + 1];
+        if (std::strcmp(argument, "--disable-neon") == 0) {
+            enableNeon = false;
+        } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
+            enableTimestamps = true;
+        } else {
+            break;
+        }
+        ++argumentOffset;
+    }
+
     if (argc != 5 + argumentOffset) {
         std::printf(
-            "%s [--disable-neon] <encoder_path> <decoder_path> <task> <audio_path>\n",
+            "%s [--disable-neon] [--enable-timestamps] "
+            "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
     }
@@ -151,6 +165,7 @@ int main(int argc, char** argv)
         audioData,
         vocab.data(),
         taskCode,
+        enableTimestamps,
         transcriptionHypothesis);
     if (result != 0) {
         std::printf("Whisper inference failed: result=%d\n", result);

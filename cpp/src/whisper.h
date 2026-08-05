@@ -48,4 +48,5 @@ int runWhisperInference(
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
+    bool enableTimestamps,
     TranscriptionHypothesis& transcriptionHypothesis);
