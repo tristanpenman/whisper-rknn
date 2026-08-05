@@ -1,4 +1,5 @@
 // Copyright (c) 2024 by Rockchip Electronics Co., Ltd. All Rights Reserved.
+// Copyright (c) 2026 by Tristan Penman
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,7 +71,7 @@ int main(int argc, char** argv)
     std::vector<float> audioData(kNumMels * kMaxAudioLength / kHopLength, 0.0f);
     std::vector<float> melFilters(kNumMels * kMelFilterSize);
     std::vector<VocabEntry> vocab(kVocabSize);
-    std::vector<std::string> recognizedText;
+    TranscriptionHypothesis transcriptionHypothesis;
     AudioBuffer audio = {};
 
     timer.tik();
@@ -150,7 +151,7 @@ int main(int argc, char** argv)
         audioData,
         vocab.data(),
         taskCode,
-        recognizedText);
+        transcriptionHypothesis);
     if (result != 0) {
         std::printf("Whisper inference failed: result=%d\n", result);
         goto cleanup;
@@ -158,11 +159,14 @@ int main(int argc, char** argv)
     timer.tok();
     timer.printTime("Run Whisper inference");
 
-    std::cout << "\nWhisper output: ";
-    for (const auto& text : recognizedText) {
-        std::cout << text;
+    std::cout << "\nWhisper output token IDs: ";
+    for (const auto& tokenId : transcriptionHypothesis.tokenIds) {
+        std::cout << tokenId << ' ';
     }
     std::cout << '\n';
+
+    std::cout << "\nWhisper output text: ";
+    std::cout << transcriptionHypothesis.text << '\n';
 
     {
         const float inferenceTime = timer.elapsedMs() / 1000.0f;

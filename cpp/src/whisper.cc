@@ -79,7 +79,7 @@ int runDecoder(
     const float* encoderOutput,
     const VocabEntry* vocab,
     int taskCode,
-    std::vector<std::string>& recognizedText)
+    TranscriptionHypothesis& transcriptionHypothesis)
 {
     rknn_input inputs[2] = {};
     rknn_output outputs[1] = {};
@@ -105,7 +105,6 @@ int runDecoder(
     int nextToken = kStartOfTranscriptToken;
     int firstMutableToken = kMaxTokens;
     int iterationCount = 0;
-    std::string decodedTokens;
 
     for (int i = 0; i < kMaxTokens / 4; ++i) {
         std::memcpy(&tokens[i * 4], tokens, 4 * sizeof(std::int64_t));
@@ -136,7 +135,9 @@ int runDecoder(
         }
 
         nextToken = argmax(static_cast<const float*>(outputs[0].buf));
-        decodedTokens += vocab[nextToken].token;
+
+        transcriptionHypothesis.tokenIds.push_back(nextToken);
+        transcriptionHypothesis.text += vocab[nextToken].token;
 
         if (nextToken <= kTimestampBeginToken) {
             if (firstMutableToken > 4) {
@@ -153,15 +154,14 @@ int runDecoder(
         outputs[0].buf = nullptr;
     }
 
-    replaceSubstring(decodedTokens, "\u0120", " ");
-    replaceSubstring(decodedTokens, "<|endoftext|>", "");
-    replaceSubstring(decodedTokens, "\n", "");
+    replaceSubstring(transcriptionHypothesis.text, "\u0120", " ");
+    replaceSubstring(transcriptionHypothesis.text, "<|endoftext|>", "");
+    replaceSubstring(transcriptionHypothesis.text, "\n", "");
 
-    if (!decodedTokens.empty()) {
+    if (!transcriptionHypothesis.text.empty()) {
         if (taskCode == kChineseTaskToken) {
-            decodedTokens = decodeBase64(decodedTokens);
+            transcriptionHypothesis.text = decodeBase64(transcriptionHypothesis.text);
         }
-        recognizedText.push_back(decodedTokens);
     }
 
 cleanup:
@@ -247,10 +247,13 @@ int runWhisperInference(
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
-    std::vector<std::string>& recognizedText)
+    TranscriptionHypothesis& transcriptionHypothesis)
 {
     std::vector<float> encoderOutput(kEncoderOutputSize);
-    recognizedText.clear();
+    TranscriptionHypothesis decodedHypothesis;
+
+    transcriptionHypothesis.text.clear();
+    transcriptionHypothesis.tokenIds.clear();
 
     int result = runEncoder(&appContext->encoderContext, audioData, encoderOutput.data());
     if (result != 0) {
@@ -263,10 +266,12 @@ int runWhisperInference(
         encoderOutput.data(),
         vocab,
         taskCode,
-        recognizedText);
+        decodedHypothesis);
     if (result != 0) {
         std::printf("Decoder inference failed: %d\n", result);
+        return result;
     }
 
-    return result;
+    transcriptionHypothesis = std::move(decodedHypothesis);
+    return 0;
 }

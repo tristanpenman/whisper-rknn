@@ -35,6 +35,12 @@ struct RknnWhisperContext
     RknnAppContext decoderContext;
 };
 
+struct TranscriptionHypothesis
+{
+    std::vector<int> tokenIds;
+    std::string text;
+};
+
 int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext);
 int releaseWhisperModel(RknnAppContext* appContext);
 int runWhisperInference(
@@ -42,4 +48,4 @@ int runWhisperInference(
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
-    std::vector<std::string>& recognizedText);
+    TranscriptionHypothesis& transcriptionHypothesis);
