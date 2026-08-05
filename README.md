@@ -185,6 +185,8 @@ python -m whisper_rknn.whisper \
 
 Use `--task zh` with `../model/test_zh.wav` for the bundled Chinese example. The RKNN workflow requires a compatible target accessible to RKNN Toolkit. Pass `--device_id <device-id>` when a specific connected device must be selected.
 
+Pass `--enable-timestamps` to include Whisper segment timestamp markers in the Python demo output.
+
 ### Export ONNX Models
 
 The `whisper_rknn.export_onnx` module exports separate Whisper encoder and decoder graphs and simplifies both graphs with ONNX Simplifier. For example:

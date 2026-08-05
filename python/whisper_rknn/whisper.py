@@ -18,7 +18,9 @@ N_MELS = 80
 
 
 def ensure_sample_rate(
-    waveform, original_sample_rate, desired_sample_rate=16000
+    waveform,
+    original_sample_rate,
+    desired_sample_rate=16000
 ):
     if original_sample_rate != desired_sample_rate:
         print(
@@ -36,7 +38,11 @@ def ensure_sample_rate(
     return waveform, desired_sample_rate
 
 
-def ensure_channels(waveform, original_channels, desired_channels=1):
+def ensure_channels(
+    waveform,
+    original_channels,
+    desired_channels=1
+):
     if original_channels != desired_channels:
         print(f"convert_channels: {original_channels} -> {desired_channels}")
         waveform = np.mean(waveform, axis=1)
@@ -186,41 +192,74 @@ def _decode(decoder_model, tokens, out_encoder):
     raise TypeError(f"Unsupported decoder model: {type(decoder_model)}")
 
 
-def run_decoder(decoder_model, out_encoder, vocab, task_code):
-    # tokenizer = whisper.decoding.get_tokenizer( True, #model.is_multilingual
-    #                                             task="transcribe",
-    #                                             language="en",
-    #                                             )
+def timestamp_argmax(logits, generated_tokens, timestamp_begin=50364):
+    end_token = 50257
+    no_timestamps_token = 50363
+    filtered_logits = logits.copy()
+    filtered_logits[no_timestamps_token] = -np.inf
 
+    if not generated_tokens:
+        filtered_logits[:timestamp_begin] = -np.inf
+        return int(filtered_logits.argmax())
+
+    last_was_timestamp = generated_tokens[-1] >= timestamp_begin
+    penultimate_was_timestamp = len(generated_tokens) < 2 or generated_tokens[-2] >= timestamp_begin
+
+    if last_was_timestamp:
+        if penultimate_was_timestamp:
+            filtered_logits[timestamp_begin:] = -np.inf
+        else:
+            filtered_logits[:end_token] = -np.inf
+
+    timestamp_tokens = [token for token in generated_tokens if token >= timestamp_begin]
+    if timestamp_tokens:
+        minimum_timestamp = timestamp_tokens[-1]
+        if not last_was_timestamp or penultimate_was_timestamp:
+            minimum_timestamp += 1
+        filtered_logits[timestamp_begin:minimum_timestamp] = -np.inf
+
+    timestamp_logits = filtered_logits[timestamp_begin:]
+    max_timestamp_logit = np.max(timestamp_logits)
+    if np.isfinite(max_timestamp_logit):
+        timestamp_log_probability = max_timestamp_logit + np.log(
+            np.exp(timestamp_logits - max_timestamp_logit).sum()
+        )
+        if timestamp_log_probability > np.max(filtered_logits[:timestamp_begin]):
+            filtered_logits[:timestamp_begin] = -np.inf
+
+    return int(filtered_logits.argmax())
+
+
+def run_decoder(decoder_model, out_encoder, vocab, task_code, enable_timestamps=False):
     end_token = 50257  # tokenizer.eot
-    # tokenizer.sot_sequence_including_notimestamps
-    tokens = [50258, task_code, 50359, 50363]
+    initial_prompt = [50258, task_code, 50359]
+    if not enable_timestamps:
+        initial_prompt.append(50363)  # tokenizer.no_timestamps
     timestamp_begin = 50364  # tokenizer.timestamp_begin
 
     max_tokens = 12
-    tokens_str = ""
-    pop_id = max_tokens
-
-    tokens = tokens * int(max_tokens / 4)
+    tokens = [initial_prompt[index % len(initial_prompt)] for index in range(max_tokens)]
+    first_mutable_token = max_tokens
+    generated_tokens = []
     next_token = 50258  # tokenizer.sot
 
     while next_token != end_token:
         out_decoder = _decode(decoder_model, tokens, out_encoder)
-        next_token = out_decoder[0, -1].argmax()
-        next_token_str = vocab[str(next_token)]
-        tokens.append(next_token)
+        logits = out_decoder[0, -1]
+        next_token = (
+            timestamp_argmax(logits, generated_tokens, timestamp_begin)
+            if enable_timestamps
+            else int(logits.argmax())
+        )
+        generated_tokens.append(next_token)
 
-        if next_token == end_token:
-            tokens.pop(-1)
-            next_token = tokens[-1]
-            break
-        if next_token > timestamp_begin:
-            continue
-        if pop_id > 4:
-            pop_id -= 1
+        if enable_timestamps or next_token <= timestamp_begin:
+            if first_mutable_token > len(initial_prompt):
+                first_mutable_token -= 1
+            tokens.append(next_token)
+            tokens.pop(first_mutable_token)
 
-        tokens.pop(pop_id)
-        tokens_str += next_token_str
+    tokens_str = "".join(vocab[str(token)] for token in generated_tokens)
 
     result = (
         tokens_str.replace("\u0120", " ")
@@ -313,6 +352,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device_id", type=str, default=None, help="device id"
     )
+    parser.add_argument(
+        "--enable-timestamps", action="store_true", help="include Whisper timestamp markers in the output"
+    )
     args = parser.parse_args()
 
     # Set inputs
@@ -346,7 +388,7 @@ if __name__ == "__main__":
         args.decoder_model_path, args.target, args.device_id
     )
     out_encoder = run_encoder(encoder_model, x_mel)
-    result = run_decoder(decoder_model, out_encoder, vocab, task_code)
+    result = run_decoder(decoder_model, out_encoder, vocab, task_code, args.enable_timestamps)
     print("\nWhisper output:", result)
 
     # Release
