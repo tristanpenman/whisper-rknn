@@ -18,7 +18,7 @@ When modifying older code, apply these conventions to the code being changed whe
 - Keep short getters and setters in the normal multi-line form. An inline one-line definition is acceptable when it materially improves the readability of a long, repetitive class.
 - For a multi-line function declaration or definition, indent each parameter by four spaces and keep the closing parenthesis with the opening brace.
 - Put each member on its own line in a multi-member constructor initializer list.
-- Follow the established line-ending and maximum-line-length settings of the repository.
+- Use a maximum line length of 120 characters. Do not aggressively wrap shorter lines; split them only when required by the limit or when doing so materially improves readability.
 
 ```cpp
 Result calculateResult(
