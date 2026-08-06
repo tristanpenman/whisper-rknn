@@ -4,7 +4,7 @@ _How Whisper works in this project_
 
 Whisper is an encoder-decoder speech recognition model. The encoder turns a compact representation of an audio signal into learned audio features, and the decoder consumes those features while generating text one token at a time. In this project, ordinary CPU code reads and prepares the audio, while Rockchip's RKNN runtime executes the neural-network encoder and decoder on a supported Rockchip NPU.
 
-The implementation is a batch transcription pipeline rather than a streaming one. It reads an entire file, uses at most the first 20 seconds, constructs one fixed-size log-Mel spectrogram, runs the encoder once, and repeatedly runs the decoder until it produces an end-of-text token or reaches a safety limit.
+The implementation is a batch transcription pipeline rather than a streaming one. It reads an entire file, uses at most the configured audio chunk, constructs one log-Mel spectrogram with the corresponding fixed model shape, runs the encoder once, and repeatedly runs the decoder until it produces an end-of-text token or reaches a safety limit. The chunk length defaults to 20 seconds, and the decoder input defaults to 12 tokens.
 
 At a high level, data moves through the program like this:
 
@@ -19,11 +19,11 @@ mono, 16 kHz waveform
     | power spectrum + Mel filter bank + log scaling
     | NEON accelerates CPU vector operations
     v
-80 x 2000 log-Mel spectrogram
+80 x (100 * chunk length) log-Mel spectrogram
     |
     | RKNN Whisper encoder
     v
-1000 x 512 learned audio features
+(50 * chunk length) x 512 learned audio features
     |
     | RKNN Whisper decoder, invoked repeatedly
     v
@@ -36,11 +36,11 @@ transcription
 
 ## Program entry point and configuration
 
-[`cpp/src/main.cc`](../cpp/src/main.cc) coordinates the pipeline. The command line supplies an encoder model, a decoder model, a task (`en` or `zh`), and an audio file. The task selects both a vocabulary file and a language token. English uses `model/vocab_en.txt` and token 50259; Chinese uses `model/vocab_zh.txt` and token 50260.
+[`cpp/src/main.cc`](../cpp/src/main.cc) coordinates the pipeline. The command line supplies an encoder model, a decoder model, a task (`en` or `zh`), and an audio file. The task selects both a vocabulary file and a language token. English uses `model/vocab_en.txt` and token 50259; Chinese uses `model/vocab_zh.txt` and token 50260. The optional `--chunk-length` and `--max-tokens` arguments select the audio window and decoder input length. Their Python equivalents are `--chunk_length` and `--max_tokens`.
 
-The fixed dimensions live in [`cpp/src/process.h`](../cpp/src/process.h). The important values are a 16 kHz sample rate, a 20-second maximum chunk, a 400-sample FFT window, a 160-sample hop, 201 real-FFT frequency bins, and 80 Mel bands. At 16 kHz, the window covers 25 ms and the hop advances by 10 ms. A 20-second chunk therefore becomes 2,000 time steps, giving the encoder an `80 x 2000` input. The declared encoder output contains `20 x 50 x 512`, or `1000 x 512`, floating-point features.
+The signal-processing constants live in [`cpp/src/process.h`](../cpp/src/process.h). The important values are a 16 kHz sample rate, a 400-sample FFT window, a 160-sample hop, 201 real-FFT frequency bins, and 80 Mel bands. At 16 kHz, the window covers 25 ms and the hop advances by 10 ms. For a chunk length of `C` seconds, preprocessing produces `100C` time steps, giving the encoder an `80 x 100C` input. The encoder output contains `50C x 512` floating-point features for the supported base model. With the default `C = 20`, those shapes are `80 x 2000` and `1000 x 512`.
 
-`main()` allocates the fixed-size spectrogram, Mel filter, vocabulary, and result buffers before doing any inference. It then performs four broad stages: load and normalize the waveform, load the filter bank and vocabulary, initialize both RKNN models, and preprocess plus transcribe the audio. The final timer output reports a real-time factor: the combined preprocessing and inference time divided by the processed audio duration. A value below 1 means that timed stage was faster than real time.
+`main()` allocates the spectrogram from the selected chunk length, along with the Mel filter, vocabulary, and result buffers, before doing any inference. It then performs four broad stages: load and normalize the waveform, load the filter bank and vocabulary, initialize both RKNN models, and preprocess plus transcribe the audio. The final timer output reports a real-time factor: the combined preprocessing and inference time divided by the processed audio duration. A value below 1 means that timed stage was faster than real time.
 
 ## 1. Reading and normalizing audio
 
@@ -60,7 +60,7 @@ Whisper does not feed raw waveform samples directly to its encoder. It first con
 
 `main()` first loads `model/mel_80_filters.txt` with `readMelFilters()`. This file contains the precomputed `80 x 201` Mel filter bank expected by the model. Each of its 80 rows combines energy from nearby FFT frequency bins into one Mel-frequency band.
 
-`preprocessAudio()` limits the input to `kMaxAudioLength`, which is 320,000 samples or 20 seconds at 16 kHz. Longer files are truncated rather than split into multiple chunks. Shorter inputs produce fewer spectrogram columns at first; `padMelSpectrogram()` copies those columns into the fixed `80 x 2000` zero-initialized encoder buffer.
+`preprocessAudio()` limits the input to `chunkLength * kSampleRate` samples. Longer files are truncated rather than split into multiple chunks. Shorter inputs produce fewer spectrogram columns at first; `padMelSpectrogram()` copies those columns into a zero-initialized encoder buffer with `80 x (100 * chunkLength)` values. The default 20-second window therefore accepts 320,000 samples and produces an `80 x 2000` buffer.
 
 The actual feature extraction in `computeLogMelSpectrogram()` follows these steps:
 
@@ -92,23 +92,23 @@ The source also contains scalar STFT code behind the disabled `#else` branch. `E
 
 Whisper's learned neural network is split into two `.rknn` files. [`cpp/src/whisper.cc`](../cpp/src/whisper.cc) wraps both with the same `RknnAppContext`, while `RknnWhisperContext` in [`cpp/src/whisper.h`](../cpp/src/whisper.h) owns one context for the encoder and one for the decoder.
 
-`initializeWhisperModel()` calls `rknn_init()` to load a model and create an RKNN context. It then queries the number and attributes of all input and output tensors with `rknn_query()`, prints their shapes, formats, types, and quantization information, and retains copies of that metadata. This is useful for diagnosing whether the supplied model files agree with the tensor layout assumed by the C++ code, although inference buffer sizes are still taken from the constants in `process.h`.
+`initializeWhisperModel()` calls `rknn_init()` to load a model and create an RKNN context. It then queries the number and attributes of all input and output tensors with `rknn_query()`, prints their shapes, formats, types, and quantization information, and retains copies of that metadata. This is useful for diagnosing whether the supplied model files agree with the selected chunk length and token count, although the runtime does not derive those values from the model metadata automatically.
 
 The RKNN runtime, provided by `librknnrt.so`, is the bridge to Rockchip's execution stack. The C++ program supplies host buffers through `rknn_inputs_set()`, starts an inference with `rknn_run()`, and retrieves outputs with `rknn_outputs_get()`. The converted RKNN graphs contain the actual Whisper transformer layers and weights; this repository's C++ code orchestrates those graphs rather than implementing transformer attention itself.
 
 ## 4. Encoding the audio
 
-`runWhisperInference()` first calls the private `runEncoder()` function. `runEncoder()` copies the entire `80 x 2000` floating-point log-Mel spectrogram into one RKNN input, runs the encoder once, requests a floating-point output, and copies `1000 x 512` values into an intermediate buffer.
+`runWhisperInference()` first calls the private `runEncoder()` function. For a chunk length of `C` seconds, `runEncoder()` copies the entire `80 x 100C` floating-point log-Mel spectrogram into one RKNN input, runs the encoder once, requests a floating-point output, and copies `50C x 512` values into an intermediate buffer. The default 20-second configuration uses `80 x 2000` input values and `1000 x 512` output features.
 
-Conceptually, Whisper's encoder first uses learned convolutional layers to project the spectrogram into its internal width and reduce the time dimension. Transformer encoder blocks then use self-attention, allowing each position to incorporate information from the rest of the audio window. The resulting features preserve information the decoder needs to predict text while compressing the 2,000 spectrogram time steps down to 1,000 feature positions. In this implementation, all of those learned encoder operations are inside the supplied RKNN model rather than expressed in the C++ source.
+Conceptually, Whisper's encoder first uses learned convolutional layers to project the spectrogram into its internal width and reduce the time dimension. Transformer encoder blocks then use self-attention, allowing each position to incorporate information from the rest of the audio window. The resulting features preserve information the decoder needs to predict text while reducing `100C` spectrogram time steps to `50C` feature positions. In the default configuration, this reduces 2,000 steps to 1,000 positions. All of those learned encoder operations are inside the supplied RKNN model rather than expressed in the C++ source.
 
 ## 5. Generating tokens with the decoder
 
-`runDecoder()` receives the encoder features as its second RKNN input. Its first input is a fixed window of 12 integer token IDs. The initial prompt contains the start-of-transcript token, the selected language token, token 50359, and token 50363. These special tokens configure the transcription mode expected by the exported decoder, including transcription without timestamp output.
+`runDecoder()` receives the encoder features as its second RKNN input. Its first input is a fixed window of `maxTokens` integer token IDs, defaulting to 12. The initial prompt contains the start-of-transcript token, the selected language token, token 50359, and, unless timestamps are enabled, token 50363. These special tokens configure the transcription mode expected by the exported decoder. The minimum accepted value is 4 so the full non-timestamp prompt fits.
 
 The decoder is autoregressive: each invocation predicts what should come next from the audio features and the current token window. Inside the RKNN decoder graph, masked self-attention relates each token to the earlier token context, cross-attention draws relevant information from the encoder's audio features, and a final projection produces vocabulary scores, or logits. `argmax()` examines the `kVocabSize` logits for the final position and selects the highest-scoring token. This is greedy decoding: the program does not use a beam search, sampling, temperature fallback, or confidence-based retry.
 
-The selected token's text is appended through the loaded vocabulary. Eligible token IDs are shifted into the 12-token context window so the next decoder invocation can condition on recent output. The loop stops when it selects token 50257 (`<|endoftext|>`) or after 1,000 iterations. The encoder output remains unchanged and is passed to every decoder invocation.
+The selected token's text is appended through the loaded vocabulary and placed after the populated prompt and output tokens. The next decoder invocation reads logits from the last populated position. Decoding stops when it selects token 50257 (`<|endoftext|>`) or fills the configured token input. The encoder output remains unchanged and is passed to every decoder invocation. A larger `maxTokens` value provides more decoding context, but it can only be used with a decoder model exported for that same input length.
 
 Finally, `runDecoder()` replaces the vocabulary's `Ġ` word-boundary marker with a normal space, removes the textual end marker and newlines, and Base64-decodes the accumulated Chinese representation when the Chinese task was selected. The resulting string is returned to `main()`, which prints it.
 
@@ -134,11 +134,11 @@ The pipeline deliberately divides work between general-purpose Arm CPU code and 
 This code is a deliberately small demonstration, so its boundaries are worth keeping in mind:
 
 - It is batch-only: the whole audio file is loaded before preprocessing or inference begins.
-- It processes no more than the first 20 seconds and does not segment longer recordings.
+- It processes no more than the configured chunk length, which defaults to the first 20 seconds, and does not segment longer recordings.
 - It explicitly converts stereo input, but it does not define a conversion for channel counts other than one or two.
 - Resampling is simple linear interpolation rather than a band-limited production-quality resampler.
-- Decoding is greedy and uses a 12-token rolling input, so it does not implement the complete set of decoding heuristics available in the original Whisper software.
+- Decoding uses the configured fixed token input, defaulting to 12 tokens, so it cannot generate beyond the remaining context after the initial prompt.
 - English and Chinese are the only task choices wired into the CLI.
-- The exported encoder and decoder must match the hard-coded sizes and special-token conventions in `process.h`, `main.cc`, and `whisper.cc`.
+- The exported encoder and decoder must match the selected chunk length and maximum token count, as well as the special-token conventions in `main.cc` and `whisper.cc`.
 
 Within those constraints, the implementation contains the complete path from an audio file to printed text: libsndfile supplies samples, FFTW and CPU vector code turn them into the features Whisper expects, RKNN runs the learned encoder and decoder, and the vocabulary layer turns the decoder's token choices into a transcription.
