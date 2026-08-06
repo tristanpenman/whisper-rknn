@@ -12,8 +12,7 @@ SAMPLE_RATE = 16000
 N_FFT = 400
 HOP_LENGTH = 160
 CHUNK_LENGTH = 20
-N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE
-MAX_LENGTH = CHUNK_LENGTH * 100
+MAX_TOKENS = 64
 N_MELS = 80
 
 
@@ -130,9 +129,10 @@ def read_vocab(vocab_path):
     return vocab
 
 
-def pad_or_trim(audio_array):
-    x_mel = np.zeros((N_MELS, MAX_LENGTH), dtype=np.float32)
-    real_length = min(audio_array.shape[1], MAX_LENGTH)
+def pad_or_trim(audio_array, chunk_length=CHUNK_LENGTH):
+    max_length = chunk_length * 100
+    x_mel = np.zeros((N_MELS, max_length), dtype=np.float32)
+    real_length = min(audio_array.shape[1], max_length)
     x_mel[:, :real_length] = audio_array[:, :real_length]
     return x_mel
 
@@ -230,15 +230,24 @@ def timestamp_argmax(logits, generated_tokens, timestamp_begin=50364):
     return int(filtered_logits.argmax())
 
 
-def run_decoder(decoder_model, out_encoder, vocab, task_code, enable_timestamps=False):
+def run_decoder(
+    decoder_model,
+    out_encoder,
+    vocab,
+    task_code,
+    enable_timestamps=False,
+    max_tokens=MAX_TOKENS,
+):
     end_token = 50257  # tokenizer.eot
     initial_prompt = [50258, task_code, 50359]
     if not enable_timestamps:
         initial_prompt.append(50363)  # tokenizer.no_timestamps
     timestamp_begin = 50364  # tokenizer.timestamp_begin
 
-    max_tokens = 12
-    tokens = [initial_prompt[index % len(initial_prompt)] for index in range(max_tokens)]
+    tokens = [
+        initial_prompt[index % len(initial_prompt)]
+        for index in range(max_tokens)
+    ]
     first_mutable_token = max_tokens
     generated_tokens = []
     next_token = 50258  # tokenizer.sot
@@ -353,9 +362,28 @@ if __name__ == "__main__":
         "--device_id", type=str, default=None, help="device id"
     )
     parser.add_argument(
-        "--enable-timestamps", action="store_true", help="include Whisper timestamp markers in the output"
+        "--enable-timestamps",
+        action="store_true",
+        help="include Whisper timestamp markers in the output",
+    )
+    parser.add_argument(
+        "--chunk_length",
+        type=int,
+        default=CHUNK_LENGTH,
+        help=f"audio chunk length in seconds (default: {CHUNK_LENGTH})",
+    )
+    parser.add_argument(
+        "--max_tokens",
+        type=int,
+        default=MAX_TOKENS,
+        help=f"decoder token input length (default: {MAX_TOKENS})",
     )
     args = parser.parse_args()
+
+    if args.chunk_length <= 0:
+        parser.error("--chunk_length must be greater than zero")
+    if args.max_tokens < 4:
+        parser.error("--max_tokens must be at least 4")
 
     # Set inputs
     if args.task == "en":
@@ -377,7 +405,7 @@ if __name__ == "__main__":
     audio_data, sample_rate = ensure_sample_rate(audio_data, sample_rate)
     audio_array = np.array(audio_data, dtype=np.float32)
     audio_array = log_mel_spectrogram(audio_array, N_MELS).numpy()
-    x_mel = pad_or_trim(audio_array)
+    x_mel = pad_or_trim(audio_array, args.chunk_length)
     x_mel = np.expand_dims(x_mel, 0)
 
     # Init/Encode/Decode
@@ -388,7 +416,14 @@ if __name__ == "__main__":
         args.decoder_model_path, args.target, args.device_id
     )
     out_encoder = run_encoder(encoder_model, x_mel)
-    result = run_decoder(decoder_model, out_encoder, vocab, task_code, args.enable_timestamps)
+    result = run_decoder(
+        decoder_model,
+        out_encoder,
+        vocab,
+        task_code,
+        enable_timestamps=args.enable_timestamps,
+        max_tokens=args.max_tokens,
+    )
     print("\nWhisper output:", result)
 
     # Release
