@@ -13,7 +13,10 @@ N_FFT = 400
 HOP_LENGTH = 160
 CHUNK_LENGTH = 20
 MAX_TOKENS = 12
+N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE
+MAX_LENGTH = CHUNK_LENGTH * 100
 N_MELS = 80
+MAX_INITIAL_TIMESTAMP_INDEX = 50
 
 
 def ensure_sample_rate(
@@ -200,6 +203,10 @@ def timestamp_argmax(logits, generated_tokens, timestamp_begin=50364):
 
     if not generated_tokens:
         filtered_logits[:timestamp_begin] = -np.inf
+        first_disallowed_timestamp = (
+            timestamp_begin + MAX_INITIAL_TIMESTAMP_INDEX + 1
+        )
+        filtered_logits[first_disallowed_timestamp:] = -np.inf
         return int(filtered_logits.argmax())
 
     last_was_timestamp = generated_tokens[-1] >= timestamp_begin
@@ -244,17 +251,15 @@ def run_decoder(
         initial_prompt.append(50363)  # tokenizer.no_timestamps
     timestamp_begin = 50364  # tokenizer.timestamp_begin
 
-    tokens = [
-        initial_prompt[index % len(initial_prompt)]
-        for index in range(max_tokens)
-    ]
-    first_mutable_token = max_tokens
+    tokens = [0] * max_tokens
+    tokens[:len(initial_prompt)] = initial_prompt
+    token_count = len(initial_prompt)
     generated_tokens = []
     next_token = 50258  # tokenizer.sot
 
-    while next_token != end_token:
+    while next_token != end_token and token_count < max_tokens:
         out_decoder = _decode(decoder_model, tokens, out_encoder)
-        logits = out_decoder[0, -1]
+        logits = out_decoder[0, token_count - 1]
         next_token = (
             timestamp_argmax(logits, generated_tokens, timestamp_begin)
             if enable_timestamps
@@ -262,11 +267,9 @@ def run_decoder(
         )
         generated_tokens.append(next_token)
 
-        if enable_timestamps or next_token <= timestamp_begin:
-            if first_mutable_token > len(initial_prompt):
-                first_mutable_token -= 1
-            tokens.append(next_token)
-            tokens.pop(first_mutable_token)
+        if next_token != end_token:
+            tokens[token_count] = next_token
+            token_count += 1
 
     tokens_str = "".join(vocab[str(token)] for token in generated_tokens)
 
@@ -326,7 +329,7 @@ def load_array_from_file(filename):
         row = [float(num) for num in line.split()]
         array.extend(row)
 
-    return np.array(array).reshape((80, 2000))
+    return np.array(array).reshape((N_MELS, MAX_LENGTH))
 
 
 if __name__ == "__main__":

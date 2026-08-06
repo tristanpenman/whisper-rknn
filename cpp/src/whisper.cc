@@ -36,7 +36,71 @@ constexpr int kChineseTaskToken = 50260;
 constexpr int kTranscribeToken = 50359;
 constexpr int kNoTimestampsToken = 50363;
 constexpr int kTimestampBeginToken = 50364;
+constexpr int kMaximumInitialTimestampIndex = 50;
 constexpr int kMaximumDecodeIterations = 1000;
+
+int timestampArgmax(const float* decoderOutput, int tokenIndex, const std::vector<int>& generatedTokens)
+{
+    const int outputOffset = tokenIndex * kVocabSize;
+    const float* logits = decoderOutput + outputOffset;
+    const bool isFirstToken = generatedTokens.empty();
+    const bool lastWasTimestamp = !isFirstToken
+        && generatedTokens.back() >= kTimestampBeginToken;
+    const bool penultimateWasTimestamp = generatedTokens.size() < 2
+        || generatedTokens[generatedTokens.size() - 2] >= kTimestampBeginToken;
+
+    const float negativeInfinity = -std::numeric_limits<float>::infinity();
+    std::vector<float> filteredLogits(logits, logits + kVocabSize);
+    filteredLogits[kNoTimestampsToken] = negativeInfinity;
+
+    if (isFirstToken) {
+        std::fill(filteredLogits.begin(), filteredLogits.begin() + kTimestampBeginToken, negativeInfinity);
+        const int firstDisallowedTimestamp = kTimestampBeginToken + kMaximumInitialTimestampIndex + 1;
+        std::fill(filteredLogits.begin() + firstDisallowedTimestamp, filteredLogits.end(), negativeInfinity);
+        const auto maximum = std::max_element(filteredLogits.begin(), filteredLogits.end());
+        return static_cast<int>(maximum - filteredLogits.begin());
+    }
+
+    if (lastWasTimestamp) {
+        if (penultimateWasTimestamp) {
+            std::fill(filteredLogits.begin() + kTimestampBeginToken, filteredLogits.end(), negativeInfinity);
+        } else {
+            std::fill(filteredLogits.begin(), filteredLogits.begin() + kEndOfTextToken, negativeInfinity);
+        }
+    }
+
+    auto lastTimestamp = std::find_if(generatedTokens.rbegin(), generatedTokens.rend(), [](int token) {
+        return token >= kTimestampBeginToken;
+    });
+    if (lastTimestamp != generatedTokens.rend()) {
+        int minimumTimestamp = *lastTimestamp;
+        if (!lastWasTimestamp || penultimateWasTimestamp) {
+            ++minimumTimestamp;
+        }
+        minimumTimestamp = std::min(minimumTimestamp, kVocabSize);
+        std::fill(
+            filteredLogits.begin() + kTimestampBeginToken,
+            filteredLogits.begin() + minimumTimestamp,
+            negativeInfinity);
+    }
+
+    const auto timestampBegin = filteredLogits.begin() + kTimestampBeginToken;
+    const float maxTimestampLogit = *std::max_element(timestampBegin, filteredLogits.end());
+    if (std::isfinite(maxTimestampLogit)) {
+        float timestampProbabilitySum = 0.0f;
+        for (auto iterator = timestampBegin; iterator != filteredLogits.end(); ++iterator) {
+            timestampProbabilitySum += std::exp(*iterator - maxTimestampLogit);
+        }
+        const float timestampLogProbability = maxTimestampLogit + std::log(timestampProbabilitySum);
+        const float maxTextLogit = *std::max_element(filteredLogits.begin(), timestampBegin);
+        if (timestampLogProbability > maxTextLogit) {
+            std::fill(filteredLogits.begin(), timestampBegin, negativeInfinity);
+        }
+    }
+
+    const auto maximum = std::max_element(filteredLogits.begin(), filteredLogits.end());
+    return static_cast<int>(maximum - filteredLogits.begin());
+}
 
 int runEncoder(
     RknnAppContext* appContext,
@@ -137,7 +201,10 @@ int runDecoder(
             goto cleanup;
         }
 
-        nextToken = argmax(static_cast<const float*>(outputs[0].buf), tokenCount - 1);
+        const float* decoderOutput = static_cast<const float*>(outputs[0].buf);
+        nextToken = enableTimestamps
+            ? timestampArgmax(decoderOutput, tokenCount - 1, transcriptionHypothesis.tokenIds)
+            : argmax(decoderOutput, tokenCount - 1);
 
         transcriptionHypothesis.tokenIds.push_back(nextToken);
         transcriptionHypothesis.text += vocab[nextToken].token;
