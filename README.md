@@ -192,7 +192,7 @@ Pass `--enable-timestamps` to include Whisper segment timestamp markers in the P
 The `whisper_rknn.export_onnx` module exports separate Whisper encoder and decoder graphs and simplifies both graphs with ONNX Simplifier. For example:
 
 ```bash
-python -m whisper_rknn.export_onnx --model_type base --n_mels 80
+python -m whisper_rknn.export_onnx --model_type base --n_mels 80 --max_tokens 64
 ```
 
 The exporter downloads the requested OpenAI Whisper checkpoint when it is not already cached, so the container must have network access on the first run. It writes the resulting pair to:
@@ -202,7 +202,7 @@ model/whisper_encoder_base.onnx
 model/whisper_decoder_base.onnx
 ```
 
-The paths above are relative to the repository root. Replace `base` with the value passed to `--model_type`. The `--n_mels` option defaults to `80`.
+The paths above are relative to the repository root. Replace `base` with the value passed to `--model_type`. The `--n_mels` option defaults to `80`. The `--max_tokens` option sets the decoder's fixed token input length and defaults to `12`. It cannot exceed the selected model's text context size.
 
 After exporting a compatible 20-second base pair, rename the files to `whisper_encoder_base_20s.onnx` and `whisper_decoder_base_20s.onnx` if you want to convert them with `./scripts/convert-models.sh`. The conversion wrapper expects those names.
 

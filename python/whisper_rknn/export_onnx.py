@@ -17,13 +17,12 @@ def setup_model(model_type):
     return model
 
 
-def setup_data(model, n_mels):
+def setup_data(model, n_mels, max_tokens):
     sample_rate = 16000
     audio_array = np.random.randn(1, 40 * sample_rate).astype(np.float32)
     audio = whisper.pad_or_trim(audio_array.flatten())
     x_mel = whisper.log_mel_spectrogram(audio, n_mels=n_mels).unsqueeze(0)
     encoder_output = model.encoder(x_mel)
-    max_tokens = 12
     x_tokens = torch.randint(0, 100, (1, max_tokens), dtype=torch.long)
     return x_mel, encoder_output, x_tokens
 
@@ -54,11 +53,21 @@ if __name__ == "__main__":
         default=80,
         help="number of mels",
     )
+    parser.add_argument(
+        "--max_tokens",
+        type=int,
+        default=12,
+        help="fixed decoder token input length",
+    )
     args = parser.parse_args()
+    if args.max_tokens <= 0:
+        parser.error("--max_tokens must be greater than zero")
 
     print("whisper available_models: ", whisper.available_models())
     model = setup_model(args.model_type)
-    x_mel, encoder_output, x_tokens = setup_data(model, args.n_mels)
+    if args.max_tokens > model.dims.n_text_ctx:
+        parser.error(f"--max_tokens cannot exceed the model text context of {model.dims.n_text_ctx}")
+    x_mel, encoder_output, x_tokens = setup_data(model, args.n_mels, args.max_tokens)
 
     save_encoder_model_path = (
         f"../model/whisper_encoder_{args.model_type}.onnx"
