@@ -14,7 +14,10 @@
 // limitations under the License.
 
 #include <algorithm>
+#include <cerrno>
+#include <climits>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -32,12 +35,26 @@ constexpr char kChineseVocabPath[] = "./model/vocab_zh.txt";
 constexpr int kEnglishTaskCode = 50259;
 constexpr int kChineseTaskCode = 50260;
 
+bool parsePositiveInteger(const char* value, int* result)
+{
+    errno = 0;
+    char* end = nullptr;
+    const long parsedValue = std::strtol(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsedValue <= 0 || parsedValue > INT_MAX) {
+        return false;
+    }
+    *result = static_cast<int>(parsedValue);
+    return true;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
 {
     bool enableNeon = true;
     bool enableTimestamps = false;
+    int chunkLength = kDefaultChunkLength;
+    int maxTokens = kDefaultMaxTokens;
     int argumentOffset = 0;
     while (argumentOffset + 1 < argc) {
         const char* argument = argv[argumentOffset + 1];
@@ -45,15 +62,39 @@ int main(int argc, char** argv)
             enableNeon = false;
         } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
             enableTimestamps = true;
+        } else if (std::strcmp(argument, "--chunk-length") == 0
+            || std::strcmp(argument, "--max-tokens") == 0) {
+            if (argumentOffset + 2 >= argc) {
+                std::printf("Missing value for %s\n", argument);
+                return -1;
+            }
+            int* optionValue = std::strcmp(argument, "--chunk-length") == 0
+                ? &chunkLength
+                : &maxTokens;
+            const char* value = argv[argumentOffset + 2];
+            if (!parsePositiveInteger(value, optionValue)) {
+                std::printf(
+                    "Invalid value for %s: %s (expected a positive integer)\n",
+                    argument,
+                    value);
+                return -1;
+            }
+            ++argumentOffset;
         } else {
             break;
         }
         ++argumentOffset;
     }
 
+    if (maxTokens < 4) {
+        std::printf("Invalid value for --max-tokens: %d (minimum is 4)\n", maxTokens);
+        return -1;
+    }
+
     if (argc != 5 + argumentOffset) {
         std::printf(
             "%s [--disable-neon] [--enable-timestamps] "
+            "[--chunk-length <seconds>] [--max-tokens <count>] "
             "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
@@ -82,7 +123,8 @@ int main(int argc, char** argv)
     int result = 0;
     EasyTimer timer;
     RknnWhisperContext appContext;
-    std::vector<float> audioData(kNumMels * kMaxAudioLength / kHopLength, 0.0f);
+    const int maxAudioLength = chunkLength * kSampleRate;
+    std::vector<float> audioData(kNumMels * maxAudioLength / kHopLength, 0.0f);
     std::vector<float> melFilters(kNumMels * kMelFilterSize);
     std::vector<VocabEntry> vocab(kVocabSize);
     TranscriptionHypothesis transcriptionHypothesis;
@@ -159,13 +201,15 @@ int main(int argc, char** argv)
     timer.printTime("Initialize Whisper decoder");
 
     timer.tik();
-    preprocessAudio(&audio, melFilters.data(), audioData, enableNeon);
+    preprocessAudio(&audio, melFilters.data(), audioData, chunkLength, enableNeon);
     result = runWhisperInference(
         &appContext,
         audioData,
         vocab.data(),
         taskCode,
         enableTimestamps,
+        chunkLength,
+        maxTokens,
         transcriptionHypothesis);
     if (result != 0) {
         std::printf("Whisper inference failed: result=%d\n", result);
@@ -187,7 +231,7 @@ int main(int argc, char** argv)
         const float inferenceTime = timer.elapsedMs() / 1000.0f;
         const float audioLength = std::min(
             audio.numFrames / static_cast<float>(kSampleRate),
-            static_cast<float>(kChunkLength));
+            static_cast<float>(chunkLength));
         const float realTimeFactor = inferenceTime / audioLength;
         std::printf(
             "\nReal Time Factor (RTF): %.3f / %.3f = %.3f\n",

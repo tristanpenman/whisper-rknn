@@ -370,21 +370,23 @@ void preprocessAudio(
     AudioBuffer* audio,
     const float* melFilters,
     std::vector<float>& melSpectrogram,
+    int chunkLength,
     bool enableNeon)
 {
+    const int maxAudioLength = chunkLength * kSampleRate;
     const int audioLength = audio->numFrames;
     std::vector<float> originalAudioData(audio->data.begin(), audio->data.begin() + audioLength);
 
-    if (audioLength >= kMaxAudioLength) {
-        std::vector<float> trimmedAudioData(kMaxAudioLength);
+    if (audioLength >= maxAudioLength) {
+        std::vector<float> trimmedAudioData(maxAudioLength);
         std::copy(
             originalAudioData.begin(),
-            originalAudioData.begin() + kMaxAudioLength,
+            originalAudioData.begin() + maxAudioLength,
             trimmedAudioData.begin());
-        const int numStftFrames = kMaxAudioLength / kHopLength + 1;
+        const int numStftFrames = maxAudioLength / kHopLength + 1;
         computeLogMelSpectrogram(
             trimmedAudioData.data(),
-            kMaxAudioLength,
+            maxAudioLength,
             numStftFrames,
             melFilters,
             melSpectrogram,
@@ -395,7 +397,7 @@ void preprocessAudio(
     const int numStftFrames = audioLength / kHopLength + 1;
     constexpr int kMelRows = kNumMels;
     const int melColumns = numStftFrames - 1;
-    constexpr int kPaddedMelColumns = kMaxAudioLength / kHopLength;
+    const int paddedMelColumns = maxAudioLength / kHopLength;
     std::vector<float> currentMelSpectrogram(kMelRows * melColumns, 0.0f);
     computeLogMelSpectrogram(
         originalAudioData.data(),
@@ -409,7 +411,7 @@ void preprocessAudio(
         kMelRows,
         melColumns,
         melSpectrogram,
-        kPaddedMelColumns);
+        paddedMelColumns);
 }
 
 int readVocab(const char* fileName, VocabEntry* vocab)
@@ -433,9 +435,9 @@ int readVocab(const char* fileName, VocabEntry* vocab)
     return 0;
 }
 
-int argmax(const float* array)
+int argmax(const float* array, int tokenIndex)
 {
-    const int startIndex = (kMaxTokens - 1) * kVocabSize;
+    const int startIndex = tokenIndex * kVocabSize;
     int maxIndex = startIndex;
     float maxValue = array[startIndex];
     for (int i = startIndex + 1; i < startIndex + kVocabSize; ++i) {

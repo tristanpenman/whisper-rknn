@@ -49,4 +49,6 @@ int runWhisperInference(
     const VocabEntry* vocab,
     int taskCode,
     bool enableTimestamps,
+    int chunkLength,
+    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis);

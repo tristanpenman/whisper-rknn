@@ -16,9 +16,11 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +41,8 @@ constexpr int kMaximumDecodeIterations = 1000;
 int runEncoder(
     RknnAppContext* appContext,
     const std::vector<float>& audioData,
+    int encoderInputSize,
+    int encoderOutputSize,
     float* encoderOutput)
 {
     rknn_input inputs[1] = {};
@@ -46,7 +50,7 @@ int runEncoder(
 
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_FLOAT32;
-    std::vector<float> inputData(audioData.begin(), audioData.begin() + kNumMels * kEncoderInputSize);
+    std::vector<float> inputData(audioData.begin(), audioData.begin() + kNumMels * encoderInputSize);
     inputs[0].size = inputData.size() * sizeof(float);
     inputs[0].buf = inputData.data();
 
@@ -69,7 +73,7 @@ int runEncoder(
         goto cleanup;
     }
 
-    std::memcpy(encoderOutput, outputs[0].buf, kEncoderOutputSize * sizeof(float));
+    std::memcpy(encoderOutput, outputs[0].buf, encoderOutputSize * sizeof(float));
 
 cleanup:
     rknn_outputs_release(appContext->rknnContext, 1, outputs);
@@ -82,6 +86,8 @@ int runDecoder(
     const VocabEntry* vocab,
     int taskCode,
     bool enableTimestamps,
+    int decoderInputSize,
+    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
     rknn_input inputs[2] = {};
@@ -89,31 +95,28 @@ int runDecoder(
 
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_INT64;
-    std::array<std::int64_t, kMaxTokens> tokenInput{};
+    std::vector<std::int64_t> tokenInput(maxTokens);
     inputs[0].size = tokenInput.size() * sizeof(std::int64_t);
     inputs[0].buf = tokenInput.data();
 
     inputs[1].index = 1;
     inputs[1].type = RKNN_TENSOR_FLOAT32;
-    std::vector<float> encoderInput(encoderOutput, encoderOutput + kDecoderInputSize);
+    std::vector<float> encoderInput(encoderOutput, encoderOutput + decoderInputSize);
     inputs[1].size = encoderInput.size() * sizeof(float);
     inputs[1].buf = encoderInput.data();
 
-    const std::array<std::int64_t, 4> initialPrompt = {kStartOfTranscriptToken, taskCode, kTranscribeToken, kNoTimestampsToken};
+    const std::array<std::int64_t, 4> initialPrompt = {
+        kStartOfTranscriptToken, taskCode, kTranscribeToken, kNoTimestampsToken};
     const int initialPromptLength = enableTimestamps ? 3 : 4;
-    std::int64_t tokens[kMaxTokens + 1] = {};
     int nextToken = kStartOfTranscriptToken;
-    int firstMutableToken = kMaxTokens;
+    int tokenCount = initialPromptLength;
     int iterationCount = 0;
 
-    for (int i = 0; i < kMaxTokens; ++i) {
-        tokens[i] = initialPrompt[i % initialPromptLength];
-    }
+    std::copy_n(initialPrompt.begin(), initialPromptLength, tokenInput.begin());
 
     int result = 0;
-    while (nextToken != kEndOfTextToken && iterationCount < kMaximumDecodeIterations) {
+    while (nextToken != kEndOfTextToken && tokenCount < maxTokens && iterationCount < kMaximumDecodeIterations) {
         ++iterationCount;
-        std::copy_n(tokens, kMaxTokens, tokenInput.begin());
 
         result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
         if (result < 0) {
@@ -134,20 +137,14 @@ int runDecoder(
             goto cleanup;
         }
 
-        nextToken = argmax(static_cast<const float*>(outputs[0].buf));
+        nextToken = argmax(static_cast<const float*>(outputs[0].buf), tokenCount - 1);
 
         transcriptionHypothesis.tokenIds.push_back(nextToken);
         transcriptionHypothesis.text += vocab[nextToken].token;
 
-        if (enableTimestamps || nextToken <= kTimestampBeginToken) {
-            if (firstMutableToken > initialPromptLength) {
-                --firstMutableToken;
-            }
-
-            tokens[kMaxTokens] = nextToken;
-            for (int i = firstMutableToken; i < kMaxTokens; ++i) {
-                tokens[i] = tokens[i + 1];
-            }
+        if (nextToken != kEndOfTextToken) {
+            tokenInput[tokenCount] = nextToken;
+            ++tokenCount;
         }
 
         rknn_outputs_release(appContext->rknnContext, 1, outputs);
@@ -248,15 +245,24 @@ int runWhisperInference(
     const VocabEntry* vocab,
     int taskCode,
     bool enableTimestamps,
+    int chunkLength,
+    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
-    std::vector<float> encoderOutput(kEncoderOutputSize);
+    const int encoderInputSize = chunkLength * 100;
+    const int encoderOutputSize = chunkLength * 50 * 512;
+    std::vector<float> encoderOutput(encoderOutputSize);
     TranscriptionHypothesis decodedHypothesis;
 
     transcriptionHypothesis.text.clear();
     transcriptionHypothesis.tokenIds.clear();
 
-    int result = runEncoder(&appContext->encoderContext, audioData, encoderOutput.data());
+    int result = runEncoder(
+        &appContext->encoderContext,
+        audioData,
+        encoderInputSize,
+        encoderOutputSize,
+        encoderOutput.data());
     if (result != 0) {
         std::printf("Encoder inference failed: %d\n", result);
         return result;
@@ -268,6 +274,8 @@ int runWhisperInference(
         vocab,
         taskCode,
         enableTimestamps,
+        encoderOutputSize,
+        maxTokens,
         decodedHypothesis);
     if (result != 0) {
         std::printf("Decoder inference failed: %d\n", result);
