@@ -41,7 +41,7 @@ Whisper is an automatic speech recognition model that converts audio into text. 
 
 ### Whisper
 
-Whisper processes audio in fixed-size windows. The current demo prepares a log-Mel spectrogram for up to 20 seconds of audio, passes it through an RKNN encoder, and then repeatedly invokes an RKNN decoder to produce text tokens.
+Whisper processes audio in fixed-size windows. By default, the current demo prepares a log-Mel spectrogram for up to 20 seconds of audio, passes it through an RKNN encoder, and then repeatedly invokes an RKNN decoder to produce text tokens.
 
 This is presently a batch pipeline: the complete audio file is read before inference begins. See [Development Status](#development-status) for planned streaming work.
 
@@ -149,7 +149,7 @@ These output paths match the model names used by the CLI examples below. The con
 
 The `python/whisper_rknn/` package contains the Python reference implementation used to prepare and validate models before running the C++ CLI. It implements the same audio loading, mono conversion, 16 kHz resampling, log-Mel preprocessing, encoder inference, and iterative decoder inference as the C++ implementation.
 
-The Python implementation can run an ONNX encoder-decoder pair through ONNX Runtime on the host CPU. It can also load an RKNN pair through RKNN Toolkit when a compatible Rockchip target is available. Its preprocessing and tensor sizes are currently configured for an 80-Mel, 20-second Whisper model.
+The Python implementation can run an ONNX encoder-decoder pair through ONNX Runtime on the host CPU. It can also load an RKNN pair on-device, through RKNN Toolkit. Its preprocessing defaults to an 80-Mel, 20-second Whisper model with a 12-token decoder input.
 
 The Python dependencies are installed in the `python` Docker Compose service. Start a shell in that environment from the repository root:
 
@@ -185,14 +185,21 @@ python -m whisper_rknn.whisper \
 
 Use `--task zh` with `../model/test_zh.wav` for the bundled Chinese example. The RKNN workflow requires a compatible target accessible to RKNN Toolkit. Pass `--device_id <device-id>` when a specific connected device must be selected.
 
-Pass `--enable-timestamps` to include Whisper segment timestamp markers in the Python demo output.
+Pass `--enable-timestamps` to include Whisper segment timestamp markers in the Python demo output. The Python demo also accepts these model-shape options:
+
+| Option                         | Default | Description                                      |
+|--------------------------------|---------|--------------------------------------------------|
+| `--chunk_length <seconds>`     | `20`    | Audio window to preprocess, in whole seconds.    |
+| `--max_tokens <count>`         | `12`    | Fixed decoder token input length; minimum is 4.  |
+
+Both values must match the tensor shapes of the encoder-decoder model pair. For example, the bundled 20-second models should use `--chunk_length 20`, and a decoder exported with `--max_tokens 12` should be run with `--max_tokens 12`.
 
 ### Export ONNX Models
 
 The `whisper_rknn.export_onnx` module exports separate Whisper encoder and decoder graphs and simplifies both graphs with ONNX Simplifier. For example:
 
 ```bash
-python -m whisper_rknn.export_onnx --model_type base --n_mels 80 --max_tokens 64
+python -m whisper_rknn.export_onnx --model_type base --n_mels 80 --max_tokens 12
 ```
 
 The exporter downloads the requested OpenAI Whisper checkpoint when it is not already cached, so the container must have network access on the first run. It writes the resulting pair to:
@@ -216,7 +223,7 @@ OpenAI Whisper uses a 30-second audio window by default, so an unmodified instal
    x = (x + self.positional_embedding[-x.shape[1]:, :]).to(x.dtype)
    ```
 
-The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require corresponding preprocessing and tensor-size changes. In particular, update `CHUNK_LENGTH` in `python/whisper_rknn/whisper.py`, and update `kChunkLength` and `kEncoderOutputSize` in `cpp/src/process.h`. The encoder width used by `kEncoderOutputSize` is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
+The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes and matching runtime options. Pass the model's window length through `--chunk_length` in Python or `--chunk-length` in C++. Pass the decoder's fixed token input length through `--max_tokens` in Python or `--max-tokens` in C++. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 
 ## Linux CLI
 
@@ -252,10 +259,12 @@ export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 The CLI accepts the encoder, decoder, transcription task, and input audio path as positional arguments:
 
 ```text
-./whisper-rknn [--disable-neon] <encoder_path> <decoder_path> <task> <audio_path>
+./whisper-rknn [--disable-neon] [--enable-timestamps] \
+  [--chunk-length <seconds>] [--max-tokens <count>] \
+  <encoder_path> <decoder_path> <task> <audio_path>
 ```
 
-Pass `--disable-neon` to use the scalar Mel-spectrogram matrix multiplication implementation. This is useful for comparing its output with the default Arm NEON implementation.
+Pass `--disable-neon` to use the scalar Mel-spectrogram matrix multiplication implementation. This is useful for comparing its output with the default Arm NEON implementation. Pass `--enable-timestamps` to include Whisper segment timestamp markers. The `--chunk-length` option defaults to 20 seconds, and `--max-tokens` defaults to 12 with a minimum of 4. Both values must match the model tensor shapes.
 
 Supported tasks are:
 
@@ -276,7 +285,7 @@ For English transcription:
 
 For Chinese transcription, use `zh` and ensure that `model/vocab_zh.txt` is available.
 
-The audio is converted from stereo to mono when needed and resampled to 16 kHz. Audio longer than 20 seconds is currently truncated to the first 20 seconds. On success, the CLI prints the recognized text, inference time, audio duration, and real-time factor.
+The audio is converted from stereo to mono when needed and resampled to 16 kHz. Audio longer than the configured chunk length is truncated to that window; the default is the first 20 seconds. On success, the CLI prints the recognized text, inference time, audio duration, and real-time factor.
 
 ## Android
 
