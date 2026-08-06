@@ -62,6 +62,8 @@ The project reported about 3.3 seconds average latency while maintaining high tr
 
 Although SimulStreaming potentially offers better performance, the goal of this project is to implement Local Agreement on the Rockchip NPU.
 
+The current application is still batch-only. It already provides several prerequisites for this design: configurable audio windows, configurable decoder token inputs, generated token IDs, and optional Whisper timestamp tokens. The rolling buffer, agreement state, incremental file replay, and provisional-output interface described below remain proposed work.
+
 ### RK3588 Architecture
 
 For an RK3588 implementation, a viable Local Agreement architecture could look like this:
@@ -124,7 +126,7 @@ The streaming layer will maintain three token sequences:
 
 Committed output is immutable. Conflicting output remains provisional until two consecutive inference passes agree on it.
 
-Agreement must be calculated using token IDs rather than rendered strings. String comparison is fragile around BPE boundaries and the Chinese vocabulary's Base64 decoding. Therefore, it will be necessary for the decoder to output token IDs in conjunction with the current text output.
+Agreement must be calculated using token IDs rather than rendered strings. String comparison is fragile around BPE boundaries and the Chinese vocabulary's Base64 decoding. The current `TranscriptionHypothesis` already returns generated token IDs in conjunction with the cleaned text output, so a streaming layer can consume those IDs directly.
 
 ### Agreement Policy
 
@@ -178,7 +180,7 @@ At end-of-stream, perform one final decode and flush its remaining hypothesis as
 
 ### Inference Interface
 
-`runDecoder()` currently converts generated tokens directly into cleaned text. It will instead return the generated token IDs as well as display text, for example:
+`runDecoder()` currently returns the generated token IDs as well as display text through this structure:
 
 ```cpp
 struct TranscriptionHypothesis
@@ -188,7 +190,7 @@ struct TranscriptionHypothesis
 };
 ```
 
-The streaming component will be independent of RKNN inference so that its state transitions can be unit-tested on the build host.
+A future streaming component should remain independent of RKNN inference so that its state transitions can be unit-tested on the build host.
 
 Updates exposed to the CLI or another consumer should distinguish permanent and replaceable output:
 
@@ -209,11 +211,11 @@ The initial implementation will use a conservative configuration:
 
 - Update interval: one second.
 - Minimum audio before the first decode: two seconds.
-- Maximum active window: 20 seconds, matching the current encoder model.
+- Maximum active window: the model's configured chunk length, defaulting to 20 seconds.
 - Agreement depth: two consecutive hypotheses.
 - Input source: an existing audio file delivered incrementally.
 
-Each update appends samples to the active buffer, preprocesses the window, runs the encoder and decoder, and submits the returned hypothesis to the agreement component.
+Each update appends samples to the active buffer, preprocesses the window, runs the encoder and decoder, and submits the returned hypothesis to the agreement component. The C++ CLI selects the window with `--chunk-length`; Python uses `--chunk_length`. The chosen value must match the exported encoder and decoder shapes.
 
 Independent, non-overlapping chunks must not be concatenated because words may be split at their boundaries. The active buffer must retain overlapping acoustic context between updates.
 
@@ -223,11 +225,11 @@ Leverage timestamps to trim the buffer.
 
 ### Alignment and Buffer Trimming
 
-Local agreement can compare tokens without timestamps, but timestamps are needed to discard old audio safely. The current decoder prompt includes token `50363`, which in the Whisper model represents the special control token `<|notimestamps|>`. It tells the decoder to output text without adding time markers.
+Local agreement can compare tokens without timestamps, but timestamps are needed to discard old audio safely. By default, the decoder prompt includes token `50363`, which in the Whisper model represents the special control token `<|notimestamps|>`. It tells the decoder to output text without adding time markers.
 
-An early experiment must establish whether the current ONNX and RKNN decoder can generate timestamp tokens after changing the prompt, or whether the decoder needs to be re-exported and reconverted.
+The current C++ and Python CLIs accept `--enable-timestamps`. In this mode they omit `<|notimestamps|>` from the prompt and apply Whisper's timestamp-token selection rules during greedy decoding. The generated timestamp IDs are retained in `TranscriptionHypothesis::tokenIds`, while their vocabulary representations remain present in the display text. A streaming layer still needs to interpret those IDs as times and associate them with committed segments.
 
-Once timestamps are available, every committed segment will retain absolute start and end times. A new decode will be compared only after the last committed time:
+Once the streaming layer interprets the timestamp tokens, every committed segment will retain absolute start and end times. A new decode will be compared only after the last committed time:
 
 ```text
 committed through: 12.4 s
@@ -237,9 +239,9 @@ comparison range:  tokens after 12.4 s
 
 After committing a segment, old audio can be removed up to its confirmed time. Approximately 0.5 to one second of preceding audio should remain as acoustic context. Text generated for time already committed must be ignored even if a later inference pass revises it.
 
-Until timestamp alignment is implemented, the prototype may let its buffer grow to the 20-second limit, but it must not guess an audio trimming point from text length.
+Until timestamp alignment is implemented, the prototype may let its buffer grow to the configured chunk-length limit, but it must not guess an audio trimming point from text length.
 
-After trimming, a bounded tail of committed tokens should be supplied to the decoder as linguistic context. The present decoder input is fixed at `kMaxTokens = 12`, so useful prompt context may require another model export.
+After trimming, a bounded tail of committed tokens should be supplied to the decoder as linguistic context. The current decoder input length is selected with `--max-tokens` in C++ or `--max_tokens` in Python and defaults to 12 tokens. It must match the decoder model's exported input shape and be at least 4. The current batch inference API does not yet accept a committed-token prefix, so adding that context requires an interface change rather than only increasing the option value.
 
 ## Optimisation
 
@@ -275,7 +277,7 @@ process ~10 s
 process ~10 s again
 ```
 
-This effectively processes approximately 20 seconds of audio for every second of new audio.
+This effectively processes approximately 30 seconds of audio for every second of new audio.
 
 If the model processes audio at `5× realtime`, then:
 
