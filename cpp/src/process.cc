@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 #include <fftw3.h>
@@ -50,16 +51,6 @@ void makeHannWindow(std::vector<float>& window, int length)
     for (int i = 0; i < length; ++i) {
         window[i] = 0.5f * (1.0f - std::cos(2.0 * kPi * i / (length - 1)));
     }
-}
-
-void reflectPad(
-    const std::vector<float>& audio,
-    std::vector<float>& paddedAudio,
-    int paddingWidth)
-{
-    std::copy(audio.begin(), audio.end(), paddedAudio.begin() + paddingWidth);
-    std::reverse_copy(audio.begin(), audio.begin() + paddingWidth, paddedAudio.begin());
-    std::reverse_copy(audio.end() - paddingWidth, audio.end(), paddedAudio.end() - paddingWidth);
 }
 
 #if ENABLE_NEON
@@ -327,6 +318,38 @@ void computeLogMelSpectrogram(
 }
 
 }  // namespace
+
+void reflectPad(
+    const std::vector<float>& input,
+    std::vector<float>& output,
+    int paddingWidth)
+{
+    // Like PyTorch, padding must be strictly smaller than the input size.
+    if (paddingWidth < 0) {
+        throw std::invalid_argument("Reflection padding width must be non-negative");
+    }
+    if (static_cast<std::size_t>(paddingWidth) >= input.size()) {
+        throw std::invalid_argument("Reflection padding width must be smaller than the input");
+    }
+
+    // Copy the input into the center and reflect adjacent samples into the padding.
+    output.resize(input.size() + 2 * static_cast<std::size_t>(paddingWidth));
+
+    // Copy original input
+    std::copy(input.begin(), input.end(), output.begin() + paddingWidth);
+
+    // Left pad
+    std::reverse_copy(
+        input.begin() + 1,
+        input.begin() + paddingWidth + 1,
+        output.begin());
+
+    // Right pad
+    std::reverse_copy(
+        input.end() - paddingWidth - 1,
+        input.end() - 1,
+        output.end() - paddingWidth);
+}
 
 void multiplyMatrices(
     const float* left,
