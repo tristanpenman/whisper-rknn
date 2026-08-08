@@ -112,12 +112,30 @@ These data assets must be available alongside the converted RKNN models. Run the
 
 ### Model Conversion
 
-The repository provides helper scripts that download the supported Whisper base encoder and decoder in ONNX format and convert them to RKNN format. Run the scripts from the repository root. The conversion requires Docker with the Docker Compose plugin, while the download script requires `wget`.
+The repository provides a wrapper that exports an original OpenAI Whisper model with a shorter, fixed audio window and converts the resulting encoder-decoder pair to RKNN. Run it from the repository root. Conversion requires Docker with the Docker Compose plugin, and downloading an OpenAI checkpoint requires network access the first time that model is used.
 
-First, download the ONNX models:
+To produce a 15-second or 20-second base model, run:
 
 ```bash
-./scripts/fetch-models.sh
+./scripts/convert-whisper.sh base 15
+./scripts/convert-whisper.sh base 20
+```
+
+The wrapper accepts an OpenAI Whisper model name or the path to a checkpoint inside the repository. It exports and validates fixed-shape ONNX graphs, then converts both graphs for the RK3588 without integer quantization. For example, the 20-second command writes:
+
+```text
+model/whisper_encoder_base_20s.onnx
+model/whisper_decoder_base_20s.onnx
+model/whisper_encoder_base_20s.rknn
+model/whisper_decoder_base_20s.rknn
+```
+
+Use `--target`, `--dtype`, `--max-tokens`, and `--output-dir` to change the conversion settings. `--onnx-only` stops after ONNX export, `--force` replaces existing outputs, and `--help` prints the complete interface. The checkpoint download is cached under `.cache/`.
+
+The older download workflow remains available for the pre-exported 20-second base pair. First, download the ONNX models:
+
+```bash
+./scripts/base-20-fetch.sh
 ```
 
 The script downloads both models into `model/`:
@@ -129,13 +147,13 @@ model/whisper_decoder_base_20s.onnx
 
 Existing files at those paths are replaced when the script is run again.
 
-Convert the downloaded models with:
+Convert that downloaded pair with:
 
 ```bash
-./scripts/convert-models.sh
+./scripts/base-20-convert.sh
 ```
 
-This script builds the `python` Docker Compose service when necessary and runs the RKNN Toolkit conversion inside the container. It converts both models for `rk3588` devices without integer quantization and writes:
+`base-20-convert.sh` runs RKNN Toolkit inside the Python container. It converts both models for `rk3588` devices without integer quantization and writes:
 
 ```text
 model/whisper_encoder_base_20s.rknn
@@ -196,32 +214,24 @@ Both values must match the tensor shapes of the encoder-decoder model pair. For 
 
 ### Export ONNX Models
 
-The `whisper_rknn.export_onnx` module exports separate Whisper encoder and decoder graphs and simplifies both graphs with ONNX Simplifier. For example:
+The `whisper_rknn.export_onnx` module exports separate, fixed-shape Whisper encoder and decoder graphs and simplifies and validates both graphs. The public wrapper invokes it automatically. It can also be run directly inside the Python container:
 
 ```bash
-python -m whisper_rknn.export_onnx --model_type base --n_mels 80 --max_tokens 12
+python -m whisper_rknn.export_onnx \
+  --model-type base \
+  --chunk-length 20 \
+  --n-mels 80 \
+  --max-tokens 12
 ```
 
 The exporter downloads the requested OpenAI Whisper checkpoint when it is not already cached, so the container must have network access on the first run. It writes the resulting pair to:
 
 ```text
-model/whisper_encoder_base.onnx
-model/whisper_decoder_base.onnx
+model/whisper_encoder_base_20s.onnx
+model/whisper_decoder_base_20s.onnx
 ```
 
-The paths above are relative to the repository root. Replace `base` with the value passed to `--model_type`. The `--n_mels` option defaults to `80`. The `--max_tokens` option sets the decoder's fixed token input length and defaults to `12`. It cannot exceed the selected model's text context size.
-
-After exporting a compatible 20-second base pair, rename the files to `whisper_encoder_base_20s.onnx` and `whisper_decoder_base_20s.onnx` if you want to convert them with `./scripts/convert-models.sh`. The conversion wrapper expects those names.
-
-OpenAI Whisper uses a 30-second audio window by default, so an unmodified installation produces 30-second ONNX graphs. To export the 20-second graphs expected by the current Python and C++ implementations, modify the installed `openai-whisper` package before running the exporter:
-
-1. In `whisper/audio.py`, change `CHUNK_LENGTH` from `30` to `20`.
-2. In `whisper/model.py`, remove or disable the encoder assertion that requires the audio tensor to have the full positional-embedding shape.
-3. In the same encoder method, replace the positional-embedding addition with a slice matching the input length:
-
-   ```python
-   x = (x + self.positional_embedding[-x.shape[1]:, :]).to(x.dtype)
-   ```
+The paths are relative to the repository root. The exporter accepts whole-second windows from 10 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. The `--n-mels` option defaults to `80`. `--max-tokens` sets the decoder's fixed token input length and defaults to `12`; it cannot exceed the selected model's text context size. Existing files are preserved unless `--force` is passed.
 
 The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes and matching runtime options. Pass the model's window length through `--chunk_length` in Python or `--chunk-length` in C++. Pass the decoder's fixed token input length through `--max_tokens` in Python or `--max-tokens` in C++. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 
