@@ -16,6 +16,16 @@ int readAudio(const char* path, AudioBuffer* audio)
         return -1;
     }
 
+    if (fileInfo.channels > 2) {
+        fprintf(
+            stderr,
+            "Error: unsupported channel count in file '%s': %d (maximum is 2).\n",
+            path,
+            fileInfo.channels);
+        sf_close(inputFile);
+        return -1;
+    }
+
     audio->numFrames = fileInfo.frames;
     audio->numChannels = fileInfo.channels;
     audio->sampleRate = fileInfo.samplerate;

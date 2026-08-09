@@ -1,3 +1,5 @@
+#include <cstdio>
+#include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -5,6 +7,30 @@
 #include "audio_utils.h"
 
 namespace {
+
+TEST(AudioUtilsTest, ReadAudioRejectsMoreThanTwoChannels)
+{
+    const std::string path = ::testing::TempDir() + "whisper-rknn-three-channel.wav";
+    const std::vector<float> samples = {
+        0.0f, 0.25f, 0.5f,
+        0.5f, 0.25f, 0.0f,
+    };
+    ASSERT_EQ(saveAudio(path.c_str(), samples.data(), 2, 16000, 3), 0);
+
+    AudioBuffer audio;
+    audio.data = {1.0f};
+    audio.numFrames = 1;
+    audio.numChannels = 1;
+    audio.sampleRate = 8000;
+
+    EXPECT_EQ(readAudio(path.c_str(), &audio), -1);
+    EXPECT_EQ(audio.data, std::vector<float>({1.0f}));
+    EXPECT_EQ(audio.numFrames, 1);
+    EXPECT_EQ(audio.numChannels, 1);
+    EXPECT_EQ(audio.sampleRate, 8000);
+
+    EXPECT_EQ(std::remove(path.c_str()), 0);
+}
 
 TEST(AudioUtilsTest, ConvertChannelsAveragesStereoSamples)
 {
