@@ -86,22 +86,23 @@ def parse_args():
     )
     parser.add_argument(
         "--n-mels",
-        default=80
+        type=int,
+        default=80,
     )
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=12
+        default=12,
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("model")
+        default=Path("model"),
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace existing ONNX models"
+        help="replace existing ONNX models",
     )
     args = parser.parse_args()
     if args.max_tokens <= 0:
