@@ -110,13 +110,34 @@ add_executable(whisper-rknn
     cpp/src/whisper.cc
 )
 
+add_executable(whisper-rknn-streaming
+    cpp/src/audio_utils.cc
+    cpp/src/file_utils.cc
+    cpp/src/logger.cc
+    cpp/src/process.cc
+    cpp/src/rknn_utils.cc
+    cpp/src/streaming.cc
+    cpp/src/string_utils.cc
+    cpp/src/whisper.cc
+)
+
 if(WHISPER_RKNN_ARCH STREQUAL "aarch64" OR WHISPER_RKNN_ARCH STREQUAL "arm64-v8a")
     target_compile_definitions(whisper-rknn PRIVATE ENABLE_NEON=1)
+    target_compile_definitions(whisper-rknn-streaming PRIVATE ENABLE_NEON=1)
 else()
     target_compile_definitions(whisper-rknn PRIVATE ENABLE_NEON=0)
+    target_compile_definitions(whisper-rknn-streaming PRIVATE ENABLE_NEON=0)
 endif()
 
 target_include_directories(whisper-rknn PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${LIBFFTW_INCLUDES}
+    ${LIBSNDFILE_INCLUDES}
+    ${LIBTIMER_INCLUDES}
+    ${RKNN_INCLUDE_DIR}
+)
+
+target_include_directories(whisper-rknn-streaming PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIBFFTW_INCLUDES}
     ${LIBSNDFILE_INCLUDES}
@@ -131,10 +152,18 @@ target_link_libraries(whisper-rknn
     nlohmann_json::nlohmann_json
 )
 
+target_link_libraries(whisper-rknn-streaming
+    ${RKNN_RUNTIME_LIB}
+    ${LIBFFTW}
+    ${LIBSNDFILE}
+    nlohmann_json::nlohmann_json
+)
+
 if (CMAKE_SYSTEM_NAME STREQUAL "Android")
     target_link_libraries(whisper-rknn
         log
     )
+    target_link_libraries(whisper-rknn-streaming log)
 endif()
 
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -143,10 +172,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     include(CheckPIESupported)
     check_pie_supported(LANGUAGES CXX)
     set_target_properties(whisper-rknn PROPERTIES POSITION_INDEPENDENT_CODE OFF)
+    set_target_properties(whisper-rknn-streaming PROPERTIES POSITION_INDEPENDENT_CODE OFF)
 
     set(THREADS_PREFER_PTHREAD_FLAG ON)
     find_package(Threads REQUIRED)
     target_link_libraries(whisper-rknn Threads::Threads)
+    target_link_libraries(whisper-rknn-streaming Threads::Threads)
 endif()
 
 # -----------------------------------------------------------------------------
