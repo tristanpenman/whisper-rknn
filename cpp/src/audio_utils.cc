@@ -1,27 +1,25 @@
 #include "audio_utils.h"
 
 #include <cmath>
-#include <cstdio>
 #include <utility>
 #include <vector>
 
 #include <sndfile.h>
+
+#include "logger.h"
 
 int readAudio(const char* path, AudioBuffer* audio)
 {
     SF_INFO fileInfo = {0};
     SNDFILE* inputFile = sf_open(path, SFM_READ, &fileInfo);
     if (inputFile == NULL) {
-        fprintf(stderr, "Error: failed to open file '%s': %s\n", path, sf_strerror(NULL));
+        LOG(ERROR) << "Failed to open audio file '" << path << "': " << sf_strerror(NULL);
         return -1;
     }
 
     if (fileInfo.channels > 2) {
-        fprintf(
-            stderr,
-            "Error: unsupported channel count in file '%s': %d (maximum is 2).\n",
-            path,
-            fileInfo.channels);
+        LOG(ERROR) << "Unsupported channel count in audio file '" << path << "': "
+                   << fileInfo.channels << " (maximum is 2)";
         sf_close(inputFile);
         return -1;
     }
@@ -33,11 +31,8 @@ int readAudio(const char* path, AudioBuffer* audio)
 
     const sf_count_t numReadFrames = sf_readf_float(inputFile, audio->data.data(), audio->numFrames);
     if (numReadFrames != audio->numFrames) {
-        fprintf(
-            stderr,
-            "Error: failed to read all frames. Expected %ld, got %ld.\n",
-            (long)audio->numFrames,
-            (long)numReadFrames);
+        LOG(ERROR) << "Failed to read all audio frames: expected " << audio->numFrames
+                   << ", got " << numReadFrames;
         audio->data.clear();
         sf_close(inputFile);
         return -1;
@@ -62,17 +57,15 @@ int saveAudio(
 
     SNDFILE* outputFile = sf_open(path, SFM_WRITE, &fileInfo);
     if (outputFile == NULL) {
-        fprintf(stderr, "Error: failed to open file '%s' for writing: %s\n", path, sf_strerror(NULL));
+        LOG(ERROR) << "Failed to open audio file '" << path << "' for writing: "
+                   << sf_strerror(NULL);
         return -1;
     }
 
     const sf_count_t numWrittenFrames = sf_writef_float(outputFile, data, numFrames);
     if (numWrittenFrames != numFrames) {
-        fprintf(
-            stderr,
-            "Error: failed to write all frames. Expected %ld, wrote %ld.\n",
-            (long)numFrames,
-            (long)numWrittenFrames);
+        LOG(ERROR) << "Failed to write all audio frames: expected " << numFrames
+                   << ", wrote " << numWrittenFrames;
         sf_close(outputFile);
         return -1;
     }
@@ -85,7 +78,8 @@ int resampleAudio(AudioBuffer* audio, int originalSampleRate, int desiredSampleR
 {
     const int originalLength = audio->numFrames;
     const int outputLength = std::round(originalLength * (double)desiredSampleRate / (double)originalSampleRate);
-    printf("resampleAudio: %d Hz -> %d Hz\n", originalSampleRate, desiredSampleRate);
+    LOG(INFO) << "Resampling audio: " << originalSampleRate << " Hz -> "
+              << desiredSampleRate << " Hz";
 
     std::vector<float> resampledData(outputLength);
 
@@ -105,7 +99,7 @@ int resampleAudio(AudioBuffer* audio, int originalSampleRate, int desiredSampleR
 
 int convertChannels(AudioBuffer* audio)
 {
-    printf("convertChannels: %d -> 1\n", audio->numChannels);
+    LOG(INFO) << "Converting audio channels: " << audio->numChannels << " -> 1";
 
     std::vector<float> convertedData(audio->numFrames);
 
