@@ -1,7 +1,10 @@
 #include "string_utils.h"
 
-#include <cstdint>
+#include <cerrno>
+#include <climits>
 #include <cstdlib>
+#include <cstdint>
+#include <cstring>
 #include <iostream>
 
 namespace {
@@ -29,22 +32,6 @@ std::int32_t base64CharacterIndex(char character)
 }
 
 }  // namespace
-
-void replaceSubstring(
-    std::string& value,
-    const std::string& from,
-    const std::string& to)
-{
-    if (from.empty()) {
-        return;
-    }
-
-    std::size_t startPosition = 0;
-    while ((startPosition = value.find(from, startPosition)) != std::string::npos) {
-        value.replace(startPosition, from.length(), to);
-        startPosition += to.length();
-    }
-}
 
 std::string decodeBase64(const std::string& encodedString)
 {
@@ -87,4 +74,32 @@ std::string decodeBase64(const std::string& encodedString)
     }
 
     return decodedString;
+}
+
+bool parsePositiveInteger(const char* value, int* result)
+{
+    errno = 0;
+    char* end = nullptr;
+    const long parsedValue = std::strtol(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsedValue <= 0 || parsedValue > INT_MAX) {
+        return false;
+    }
+    *result = static_cast<int>(parsedValue);
+    return true;
+}
+
+void replaceSubstring(
+    std::string& value,
+    const std::string& from,
+    const std::string& to)
+{
+    if (from.empty()) {
+        return;
+    }
+
+    std::size_t startPosition = 0;
+    while ((startPosition = value.find(from, startPosition)) != std::string::npos) {
+        value.replace(startPosition, from.length(), to);
+        startPosition += to.length();
+    }
 }

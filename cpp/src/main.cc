@@ -14,10 +14,7 @@
 // limitations under the License.
 
 #include <algorithm>
-#include <cerrno>
-#include <climits>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -26,6 +23,7 @@
 #include "audio_utils.h"
 #include "easy_timer.h"
 #include "process.h"
+#include "string_utils.h"
 #include "whisper.h"
 
 namespace {
@@ -34,18 +32,6 @@ constexpr char kEnglishVocabPath[] = "./model/vocab_en.txt";
 constexpr char kChineseVocabPath[] = "./model/vocab_zh.txt";
 constexpr int kEnglishTaskCode = 50259;
 constexpr int kChineseTaskCode = 50260;
-
-bool parsePositiveInteger(const char* value, int* result)
-{
-    errno = 0;
-    char* end = nullptr;
-    const long parsedValue = std::strtol(value, &end, 10);
-    if (errno != 0 || end == value || *end != '\0' || parsedValue <= 0 || parsedValue > INT_MAX) {
-        return false;
-    }
-    *result = static_cast<int>(parsedValue);
-    return true;
-}
 
 }  // namespace
 

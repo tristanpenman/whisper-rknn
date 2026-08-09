@@ -6,6 +6,25 @@
 
 namespace {
 
+TEST(StringUtilsTest, ParsePositiveIntegerAcceptsPositiveValues)
+{
+    int result = 0;
+
+    EXPECT_TRUE(parsePositiveInteger("42", &result));
+    EXPECT_EQ(result, 42);
+}
+
+TEST(StringUtilsTest, ParsePositiveIntegerRejectsInvalidValues)
+{
+    int result = 7;
+
+    EXPECT_FALSE(parsePositiveInteger("0", &result));
+    EXPECT_FALSE(parsePositiveInteger("-1", &result));
+    EXPECT_FALSE(parsePositiveInteger("12seconds", &result));
+    EXPECT_FALSE(parsePositiveInteger("", &result));
+    EXPECT_EQ(result, 7);
+}
+
 TEST(StringUtilsTest, ReplaceSubstringReplacesSingleOccurrence)
 {
     std::string value = "hello world";
