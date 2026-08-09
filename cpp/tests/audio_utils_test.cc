@@ -71,4 +71,19 @@ TEST(AudioUtilsTest, ConvertChannelsHandlesEmptyStereoBuffer)
     EXPECT_EQ(audio.sampleRate, 16000);
 }
 
+TEST(AudioUtilsTest, ResampleAudioUpdatesSampleRateMetadata)
+{
+    AudioBuffer audio;
+    audio.data = {0.0f, 1.0f, 0.0f, -1.0f};
+    audio.numFrames = 4;
+    audio.numChannels = 1;
+    audio.sampleRate = 8000;
+
+    EXPECT_EQ(resampleAudio(&audio, audio.sampleRate, 16000), 0);
+
+    EXPECT_EQ(audio.sampleRate, 16000);
+    EXPECT_EQ(audio.numFrames, 8);
+    EXPECT_EQ(audio.data.size(), static_cast<std::size_t>(audio.numFrames));
+}
+
 }  // namespace

@@ -88,6 +88,7 @@ int resampleAudio(AudioBuffer* audio, int originalSampleRate, int desiredSampleR
     }
 
     audio->numFrames = outputLength;
+    audio->sampleRate = desiredSampleRate;
     audio->data = std::move(resampledData);
     return 0;
 }
