@@ -13,6 +13,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 
 SAMPLE_RATE = 16000
 MEL_FRAMES_PER_SECOND = 100
+MIN_CHUNK_LENGTH = 5
+MAX_CHUNK_LENGTH = 30
 
 
 class ShortAudioEncoder(torch.nn.Module):
@@ -34,6 +36,22 @@ class ShortAudioEncoder(torch.nn.Module):
         for block in encoder.blocks:
             x = block(x)
         return encoder.ln_post(x)
+
+
+def chunk_length_seconds(value):
+    """Parse --chunk-length as a whole number of seconds within the supported range."""
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"must be a whole number of seconds, got {value!r}"
+        ) from None
+    if not MIN_CHUNK_LENGTH <= seconds <= MAX_CHUNK_LENGTH:
+        raise argparse.ArgumentTypeError(
+            f"must be from {MIN_CHUNK_LENGTH} to {MAX_CHUNK_LENGTH} seconds, "
+            f"got {seconds}"
+        )
+    return seconds
 
 
 def setup_model(model_type):
@@ -79,10 +97,13 @@ def parse_args():
     )
     parser.add_argument(
         "--chunk-length",
-        type=int,
-        choices=(15, 20),
+        type=chunk_length_seconds,
         required=True,
-        help="fixed audio window in seconds",
+        metavar="SECONDS",
+        help=(
+            f"fixed audio window in whole seconds, from {MIN_CHUNK_LENGTH} to "
+            f"{MAX_CHUNK_LENGTH}"
+        ),
     )
     parser.add_argument(
         "--n-mels",
@@ -121,6 +142,12 @@ def main():
     if args.n_mels != model.dims.n_mels:
         parser.error(
             f"--n-mels must match the model Mel count of {model.dims.n_mels}"
+        )
+    encoder_frames = args.chunk_length * MEL_FRAMES_PER_SECOND // 2
+    if encoder_frames > model.dims.n_audio_ctx:
+        parser.error(
+            f"--chunk-length cannot exceed the model audio context of "
+            f"{model.dims.n_audio_ctx * 2 // MEL_FRAMES_PER_SECOND} seconds"
         )
 
     label = model_label(args.model_type)

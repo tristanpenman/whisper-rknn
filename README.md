@@ -114,7 +114,7 @@ These data assets must be available alongside the converted RKNN models. Run the
 
 The repository provides a wrapper that exports an original OpenAI Whisper model with a shorter, fixed audio window and converts the resulting encoder-decoder pair to RKNN. Run it from the repository root. Conversion requires Docker with the Docker Compose plugin, and downloading an OpenAI checkpoint requires network access the first time that model is used.
 
-To produce a 15-second or 20-second base model, run:
+The audio window is any whole number of seconds from 5 to 30. To produce a 15-second or 20-second base model, run:
 
 ```bash
 ./scripts/convert-whisper.sh base 15
@@ -231,7 +231,7 @@ model/whisper_encoder_base_20s.onnx
 model/whisper_decoder_base_20s.onnx
 ```
 
-The paths are relative to the repository root. The exporter accepts whole-second windows from 10 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. The `--n-mels` option defaults to `80`. `--max-tokens` sets the decoder's fixed token input length and defaults to `12`; it cannot exceed the selected model's text context size. Existing files are preserved unless `--force` is passed.
+The paths are relative to the repository root. The exporter accepts any whole-second window from 5 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. `--chunk-length` must be a whole number of seconds within that range, so fractional and non-numeric values are rejected, as are windows longer than the selected model's audio context. The `--n-mels` option defaults to `80`. `--max-tokens` sets the decoder's fixed token input length and defaults to `12`; it cannot exceed the selected model's text context size. Existing files are preserved unless `--force` is passed.
 
 The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes and matching runtime options. Pass the model's window length through `--chunk_length` in Python or `--chunk-length` in C++. Pass the decoder's fixed token input length through `--max_tokens` in Python or `--max-tokens` in C++. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 

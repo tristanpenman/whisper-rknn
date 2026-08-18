@@ -15,7 +15,7 @@ Usage: ./scripts/convert-whisper.sh [options] <model> <seconds>
 
 Arguments:
   model                   Whisper model name or checkpoint path
-  seconds                 Audio window: whole seconds from 10 to 30
+  seconds                 Audio window: whole seconds from 5 to 30
 
 Options:
   --target <platform>     RKNN target (default: rk3588)
@@ -79,8 +79,8 @@ fi
 MODEL_TYPE="${POSITIONAL[0]}"
 
 CHUNK_LENGTH="${POSITIONAL[1]}"
-if [[ ! "$CHUNK_LENGTH" =~ ^(1[0-9]|2[0-9]|30)$ ]]; then
-  echo "seconds must be a whole integer from 10 to 30" >&2
+if [[ ! "$CHUNK_LENGTH" =~ ^([5-9]|1[0-9]|2[0-9]|30)$ ]]; then
+  echo "seconds must be a whole integer from 5 to 30" >&2
   exit 2
 fi
 
