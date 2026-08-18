@@ -36,18 +36,18 @@ constexpr int kChineseTaskToken = 50260;
 constexpr int kTranscribeToken = 50359;
 constexpr int kNoTimestampsToken = 50363;
 constexpr int kTimestampBeginToken = 50364;
-constexpr int kMaximumInitialTimestampIndex = 50;
-constexpr int kMaximumDecodeIterations = 1000;
+constexpr int kMaxInitialTimestampIndex = 50;
+constexpr int kMaxDecodeIterations = 1000;
 
 int timestampArgmax(const float* decoderOutput, int tokenIndex, const std::vector<int>& generatedTokens)
 {
     const int outputOffset = tokenIndex * kVocabSize;
     const float* logits = decoderOutput + outputOffset;
     const bool isFirstToken = generatedTokens.empty();
-    const bool lastWasTimestamp = !isFirstToken
-        && generatedTokens.back() >= kTimestampBeginToken;
-    const bool penultimateWasTimestamp = generatedTokens.size() < 2
-        || generatedTokens[generatedTokens.size() - 2] >= kTimestampBeginToken;
+    const bool lastWasTimestamp =
+        !isFirstToken && generatedTokens.back() >= kTimestampBeginToken;
+    const bool penultimateWasTimestamp =
+        generatedTokens.size() < 2 || generatedTokens[generatedTokens.size() - 2] >= kTimestampBeginToken;
 
     const float negativeInfinity = -std::numeric_limits<float>::infinity();
     std::vector<float> filteredLogits(logits, logits + kVocabSize);
@@ -55,7 +55,7 @@ int timestampArgmax(const float* decoderOutput, int tokenIndex, const std::vecto
 
     if (isFirstToken) {
         std::fill(filteredLogits.begin(), filteredLogits.begin() + kTimestampBeginToken, negativeInfinity);
-        const int firstDisallowedTimestamp = kTimestampBeginToken + kMaximumInitialTimestampIndex + 1;
+        const int firstDisallowedTimestamp = kTimestampBeginToken + kMaxInitialTimestampIndex + 1;
         std::fill(filteredLogits.begin() + firstDisallowedTimestamp, filteredLogits.end(), negativeInfinity);
         const auto maximum = std::max_element(filteredLogits.begin(), filteredLogits.end());
         return static_cast<int>(maximum - filteredLogits.begin());
@@ -151,15 +151,31 @@ int runDecoder(
     int taskCode,
     bool enableTimestamps,
     int decoderInputSize,
-    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
+    const int initialPromptLength = enableTimestamps ? 3 : 4;
+
+    // The decoder graph is exported with a fixed token input length, so the
+    // model itself determines how many tokens can be decoded.
+    if (appContext->inputAttributes.empty()) {
+        std::printf("Decoder model does not report any input tensors\n");
+        return -1;
+    }
+    const int tokenInputLength = static_cast<int>(appContext->inputAttributes[0].n_elems);
+    if (tokenInputLength <= initialPromptLength) {
+        std::printf(
+            "Decoder token input length is %d, but at least %d is required\n",
+            tokenInputLength,
+            initialPromptLength + 1);
+        return -1;
+    }
+
     rknn_input inputs[2] = {};
     rknn_output outputs[1] = {};
 
     inputs[0].index = 0;
     inputs[0].type = RKNN_TENSOR_INT64;
-    std::vector<std::int64_t> tokenInput(maxTokens);
+    std::vector<std::int64_t> tokenInput(tokenInputLength);
     inputs[0].size = tokenInput.size() * sizeof(std::int64_t);
     inputs[0].buf = tokenInput.data();
 
@@ -170,8 +186,9 @@ int runDecoder(
     inputs[1].buf = encoderInput.data();
 
     const std::array<std::int64_t, 4> initialPrompt = {
-        kStartOfTranscriptToken, taskCode, kTranscribeToken, kNoTimestampsToken};
-    const int initialPromptLength = enableTimestamps ? 3 : 4;
+        kStartOfTranscriptToken, taskCode, kTranscribeToken, kNoTimestampsToken
+    };
+
     int nextToken = kStartOfTranscriptToken;
     int tokenCount = initialPromptLength;
     int iterationCount = 0;
@@ -179,7 +196,7 @@ int runDecoder(
     std::copy_n(initialPrompt.begin(), initialPromptLength, tokenInput.begin());
 
     int result = 0;
-    while (nextToken != kEndOfTextToken && tokenCount < maxTokens && iterationCount < kMaximumDecodeIterations) {
+    while (nextToken != kEndOfTextToken && tokenCount < tokenInputLength && iterationCount < kMaxDecodeIterations) {
         ++iterationCount;
 
         result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
@@ -313,7 +330,6 @@ int runWhisperInference(
     int taskCode,
     bool enableTimestamps,
     int chunkLength,
-    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
     const int encoderInputSize = chunkLength * 100;
@@ -342,7 +358,6 @@ int runWhisperInference(
         taskCode,
         enableTimestamps,
         encoderOutputSize,
-        maxTokens,
         decodedHypothesis);
     if (result != 0) {
         std::printf("Decoder inference failed: %d\n", result);

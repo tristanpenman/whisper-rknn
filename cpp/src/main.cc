@@ -40,7 +40,6 @@ int main(int argc, char** argv)
     bool enableNeon = true;
     bool enableTimestamps = false;
     int chunkLength = kDefaultChunkLength;
-    int maxTokens = kDefaultMaxTokens;
     int argumentOffset = 0;
     while (argumentOffset + 1 < argc) {
         const char* argument = argv[argumentOffset + 1];
@@ -48,17 +47,13 @@ int main(int argc, char** argv)
             enableNeon = false;
         } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
             enableTimestamps = true;
-        } else if (std::strcmp(argument, "--chunk-length") == 0
-            || std::strcmp(argument, "--max-tokens") == 0) {
+        } else if (std::strcmp(argument, "--chunk-length") == 0) {
             if (argumentOffset + 2 >= argc) {
                 std::printf("Missing value for %s\n", argument);
                 return -1;
             }
-            int* optionValue = std::strcmp(argument, "--chunk-length") == 0
-                ? &chunkLength
-                : &maxTokens;
             const char* value = argv[argumentOffset + 2];
-            if (!parsePositiveInteger(value, optionValue)) {
+            if (!parsePositiveInteger(value, &chunkLength)) {
                 std::printf(
                     "Invalid value for %s: %s (expected a positive integer)\n",
                     argument,
@@ -72,15 +67,10 @@ int main(int argc, char** argv)
         ++argumentOffset;
     }
 
-    if (maxTokens < 4) {
-        std::printf("Invalid value for --max-tokens: %d (minimum is 4)\n", maxTokens);
-        return -1;
-    }
-
     if (argc != 5 + argumentOffset) {
         std::printf(
             "%s [--disable-neon] [--enable-timestamps] "
-            "[--chunk-length <seconds>] [--max-tokens <count>] "
+            "[--chunk-length <seconds>] "
             "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
@@ -195,7 +185,6 @@ int main(int argc, char** argv)
         taskCode,
         enableTimestamps,
         chunkLength,
-        maxTokens,
         transcriptionHypothesis);
     if (result != 0) {
         std::printf("Whisper inference failed: result=%d\n", result);

@@ -50,7 +50,6 @@ int main(int argc, char** argv)
     bool enableNeon = true;
     bool enableTimestamps = false;
     int chunkLength = kDefaultChunkLength;
-    int maxTokens = kDefaultMaxTokens;
     int argumentOffset = 0;
     while (argumentOffset + 1 < argc) {
         const char* argument = argv[argumentOffset + 1];
@@ -58,16 +57,12 @@ int main(int argc, char** argv)
             enableNeon = false;
         } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
             enableTimestamps = true;
-        } else if (std::strcmp(argument, "--chunk-length") == 0
-            || std::strcmp(argument, "--max-tokens") == 0) {
+        } else if (std::strcmp(argument, "--chunk-length") == 0) {
             if (argumentOffset + 2 >= argc) {
                 std::printf("Missing value for %s\n", argument);
                 return -1;
             }
-            int* optionValue = std::strcmp(argument, "--chunk-length") == 0
-                ? &chunkLength
-                : &maxTokens;
-            if (!parsePositiveInteger(argv[argumentOffset + 2], optionValue)) {
+            if (!parsePositiveInteger(argv[argumentOffset + 2], &chunkLength)) {
                 std::printf("Invalid value for %s: %s\n", argument, argv[argumentOffset + 2]);
                 return -1;
             }
@@ -78,16 +73,16 @@ int main(int argc, char** argv)
         ++argumentOffset;
     }
 
-    if (maxTokens < 4 || chunkLength < kUpdateLengthSeconds) {
+    if (chunkLength < kUpdateLengthSeconds) {
         std::printf(
-            "--max-tokens must be at least 4 and --chunk-length must be at least %d\n",
+            "--chunk-length must be at least %d\n",
             kUpdateLengthSeconds);
         return -1;
     }
     if (argc != 5 + argumentOffset) {
         std::printf(
             "%s [--disable-neon] [--enable-timestamps] "
-            "[--chunk-length <seconds>] [--max-tokens <count>] "
+            "[--chunk-length <seconds>] "
             "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
@@ -175,7 +170,6 @@ int main(int argc, char** argv)
                 taskCode,
                 enableTimestamps,
                 chunkLength,
-                maxTokens,
                 hypothesis);
             if (result != 0) {
                 std::printf("Whisper inference failed: result=%d\n", result);

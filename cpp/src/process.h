@@ -6,7 +6,6 @@
 #include "audio_utils.h"
 
 inline constexpr int kVocabSize = 51865;
-inline constexpr int kDefaultMaxTokens = 12;
 inline constexpr int kSampleRate = 16000;
 inline constexpr int kFftSize = 400;
 inline constexpr int kHopLength = 160;

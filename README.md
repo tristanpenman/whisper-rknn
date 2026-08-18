@@ -233,7 +233,7 @@ model/whisper_decoder_base_20s.onnx
 
 The paths are relative to the repository root. The exporter accepts any whole-second window from 5 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. `--chunk-length` must be a whole number of seconds within that range, so fractional and non-numeric values are rejected, as are windows longer than the selected model's audio context. The `--n-mels` option defaults to `80`. `--max-tokens` sets the decoder's fixed token input length and defaults to `12`; it cannot exceed the selected model's text context size. Existing files are preserved unless `--force` is passed.
 
-The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes and matching runtime options. Pass the model's window length through `--chunk_length` in Python or `--chunk-length` in C++. Pass the decoder's fixed token input length through `--max_tokens` in Python or `--max-tokens` in C++. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
+The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes and matching runtime options. Pass the model's window length through `--chunk_length` in Python or `--chunk-length` in C++. The Python demo also needs the decoder's fixed token input length through `--max_tokens`; the C++ CLI reads it from the model. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 
 ## Linux CLI
 
@@ -270,11 +270,11 @@ The CLI accepts the encoder, decoder, transcription task, and input audio path a
 
 ```text
 ./whisper-rknn [--disable-neon] [--enable-timestamps] \
-  [--chunk-length <seconds>] [--max-tokens <count>] \
+  [--chunk-length <seconds>] \
   <encoder_path> <decoder_path> <task> <audio_path>
 ```
 
-Pass `--disable-neon` to use the scalar Mel-spectrogram matrix multiplication implementation. This is useful for comparing its output with the default Arm NEON implementation. Pass `--enable-timestamps` to include Whisper segment timestamp markers. The `--chunk-length` option defaults to 20 seconds, and `--max-tokens` defaults to 12 with a minimum of 4. Both values must match the model tensor shapes.
+Pass `--disable-neon` to use the scalar Mel-spectrogram matrix multiplication implementation. This is useful for comparing its output with the default Arm NEON implementation. Pass `--enable-timestamps` to include Whisper segment timestamp markers. The `--chunk-length` option defaults to 20 seconds and must match the encoder tensor shapes. The decoder's fixed token input length is read from the RKNN model at load time, so it never needs to be passed on the command line.
 
 Supported tasks are:
 

@@ -50,5 +50,4 @@ int runWhisperInference(
     int taskCode,
     bool enableTimestamps,
     int chunkLength,
-    int maxTokens,
     TranscriptionHypothesis& transcriptionHypothesis);
