@@ -23,7 +23,6 @@
 #include "audio_utils.h"
 #include "easy_timer.h"
 #include "process.h"
-#include "string_utils.h"
 #include "whisper.h"
 
 namespace {
@@ -39,7 +38,6 @@ int main(int argc, char** argv)
 {
     bool enableNeon = true;
     bool enableTimestamps = false;
-    int chunkLength = kDefaultChunkLength;
     int argumentOffset = 0;
     while (argumentOffset + 1 < argc) {
         const char* argument = argv[argumentOffset + 1];
@@ -47,20 +45,6 @@ int main(int argc, char** argv)
             enableNeon = false;
         } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
             enableTimestamps = true;
-        } else if (std::strcmp(argument, "--chunk-length") == 0) {
-            if (argumentOffset + 2 >= argc) {
-                std::printf("Missing value for %s\n", argument);
-                return -1;
-            }
-            const char* value = argv[argumentOffset + 2];
-            if (!parsePositiveInteger(value, &chunkLength)) {
-                std::printf(
-                    "Invalid value for %s: %s (expected a positive integer)\n",
-                    argument,
-                    value);
-                return -1;
-            }
-            ++argumentOffset;
         } else {
             break;
         }
@@ -70,7 +54,6 @@ int main(int argc, char** argv)
     if (argc != 5 + argumentOffset) {
         std::printf(
             "%s [--disable-neon] [--enable-timestamps] "
-            "[--chunk-length <seconds>] "
             "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
@@ -97,10 +80,10 @@ int main(int argc, char** argv)
     }
 
     int result = 0;
+    int chunkLength = 0;
     EasyTimer timer;
     RknnWhisperContext appContext;
-    const int maxAudioLength = chunkLength * kSampleRate;
-    std::vector<float> audioData(kNumMels * maxAudioLength / kHopLength, 0.0f);
+    std::vector<float> audioData;
     std::vector<float> melFilters(kNumMels * kMelFilterSize);
     std::vector<VocabEntry> vocab(kVocabSize);
     TranscriptionHypothesis transcriptionHypothesis;
@@ -164,6 +147,13 @@ int main(int argc, char** argv)
     timer.tok();
     timer.printTime("Initialize Whisper encoder");
 
+    result = getWhisperChunkLength(appContext.encoderContext, &chunkLength);
+    if (result != 0) {
+        goto cleanup;
+    }
+    audioData.resize(kNumMels * chunkLength * kSampleRate / kHopLength, 0.0f);
+    std::printf("Model chunk length: %d seconds\n", chunkLength);
+
     timer.tik();
     result = initializeWhisperModel(decoderPath, &appContext.decoderContext);
     if (result != 0) {
@@ -184,7 +174,6 @@ int main(int argc, char** argv)
         vocab.data(),
         taskCode,
         enableTimestamps,
-        chunkLength,
         transcriptionHypothesis);
     if (result != 0) {
         std::printf("Whisper inference failed: result=%d\n", result);

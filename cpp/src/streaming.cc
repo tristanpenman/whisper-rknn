@@ -14,7 +14,6 @@
 
 #include "audio_utils.h"
 #include "process.h"
-#include "string_utils.h"
 #include "whisper.h"
 
 namespace {
@@ -49,7 +48,6 @@ int main(int argc, char** argv)
 {
     bool enableNeon = true;
     bool enableTimestamps = false;
-    int chunkLength = kDefaultChunkLength;
     int argumentOffset = 0;
     while (argumentOffset + 1 < argc) {
         const char* argument = argv[argumentOffset + 1];
@@ -57,32 +55,15 @@ int main(int argc, char** argv)
             enableNeon = false;
         } else if (std::strcmp(argument, "--enable-timestamps") == 0) {
             enableTimestamps = true;
-        } else if (std::strcmp(argument, "--chunk-length") == 0) {
-            if (argumentOffset + 2 >= argc) {
-                std::printf("Missing value for %s\n", argument);
-                return -1;
-            }
-            if (!parsePositiveInteger(argv[argumentOffset + 2], &chunkLength)) {
-                std::printf("Invalid value for %s: %s\n", argument, argv[argumentOffset + 2]);
-                return -1;
-            }
-            ++argumentOffset;
         } else {
             break;
         }
         ++argumentOffset;
     }
 
-    if (chunkLength < kUpdateLengthSeconds) {
-        std::printf(
-            "--chunk-length must be at least %d\n",
-            kUpdateLengthSeconds);
-        return -1;
-    }
     if (argc != 5 + argumentOffset) {
         std::printf(
             "%s [--disable-neon] [--enable-timestamps] "
-            "[--chunk-length <seconds>] "
             "<encoder_path> <decoder_path> <task> <audio_path>\n",
             argv[0]);
         return -1;
@@ -106,6 +87,7 @@ int main(int argc, char** argv)
     }
 
     int result = 0;
+    int chunkLength = 0;
     bool encoderInitialized = false;
     bool decoderInitialized = false;
     AudioBuffer inputAudio;
@@ -137,6 +119,18 @@ int main(int argc, char** argv)
         goto cleanup;
     }
     encoderInitialized = true;
+    result = getWhisperChunkLength(appContext.encoderContext, &chunkLength);
+    if (result != 0) {
+        goto cleanup;
+    }
+    if (chunkLength < kUpdateLengthSeconds) {
+        std::printf(
+            "Model chunk length must be at least %d seconds\n",
+            kUpdateLengthSeconds);
+        result = -1;
+        goto cleanup;
+    }
+    std::printf("Model chunk length: %d seconds\n", chunkLength);
     if ((result = initializeWhisperModel(decoderPath, &appContext.decoderContext)) != 0) {
         std::printf("Failed to initialize Whisper decoder: result=%d\n", result);
         goto cleanup;
@@ -169,7 +163,6 @@ int main(int argc, char** argv)
                 vocab.data(),
                 taskCode,
                 enableTimestamps,
-                chunkLength,
                 hypothesis);
             if (result != 0) {
                 std::printf("Whisper inference failed: result=%d\n", result);

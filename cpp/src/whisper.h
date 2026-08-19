@@ -43,11 +43,11 @@ struct TranscriptionHypothesis
 
 int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext);
 int releaseWhisperModel(RknnAppContext* appContext);
+int getWhisperChunkLength(const RknnAppContext& encoderContext, int* chunkLength);
 int runWhisperInference(
     RknnWhisperContext* appContext,
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
     bool enableTimestamps,
-    int chunkLength,
     TranscriptionHypothesis& transcriptionHypothesis);

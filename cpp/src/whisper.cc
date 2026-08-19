@@ -323,17 +323,48 @@ int releaseWhisperModel(RknnAppContext* appContext)
     return 0;
 }
 
+int getWhisperChunkLength(const RknnAppContext& encoderContext, int* chunkLength)
+{
+    if (chunkLength == nullptr || encoderContext.inputAttributes.empty()) {
+        std::printf("Encoder model does not report an input tensor\n");
+        return -1;
+    }
+
+    constexpr int kMelFramesPerSecond = kSampleRate / kHopLength;
+    constexpr int kElementsPerSecond = kNumMels * kMelFramesPerSecond;
+    const std::uint32_t inputElements = encoderContext.inputAttributes[0].n_elems;
+    if (inputElements == 0 || inputElements % kElementsPerSecond != 0) {
+        std::printf(
+            "Encoder input has %u elements; expected 80 Mel bins and a whole number of seconds\n",
+            inputElements);
+        return -1;
+    }
+
+    *chunkLength = static_cast<int>(inputElements / kElementsPerSecond);
+    return 0;
+}
+
 int runWhisperInference(
     RknnWhisperContext* appContext,
     const std::vector<float>& audioData,
     const VocabEntry* vocab,
     int taskCode,
     bool enableTimestamps,
-    int chunkLength,
     TranscriptionHypothesis& transcriptionHypothesis)
 {
-    const int encoderInputSize = chunkLength * 100;
-    const int encoderOutputSize = chunkLength * 50 * 512;
+    if (appContext->encoderContext.inputAttributes.empty()
+        || appContext->encoderContext.outputAttributes.empty()) {
+        std::printf("Encoder model does not report its tensor dimensions\n");
+        return -1;
+    }
+    const int encoderInputSize =
+        static_cast<int>(appContext->encoderContext.inputAttributes[0].n_elems / kNumMels);
+    const int encoderOutputSize =
+        static_cast<int>(appContext->encoderContext.outputAttributes[0].n_elems);
+    if (audioData.size() < static_cast<std::size_t>(kNumMels * encoderInputSize)) {
+        std::printf("Mel spectrogram is smaller than the encoder input tensor\n");
+        return -1;
+    }
     std::vector<float> encoderOutput(encoderOutputSize);
     TranscriptionHypothesis decodedHypothesis;
 

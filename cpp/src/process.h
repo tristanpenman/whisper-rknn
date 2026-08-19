@@ -9,7 +9,6 @@ inline constexpr int kVocabSize = 51865;
 inline constexpr int kSampleRate = 16000;
 inline constexpr int kFftSize = 400;
 inline constexpr int kHopLength = 160;
-inline constexpr int kDefaultChunkLength = 20;
 inline constexpr int kNumMels = 80;
 inline constexpr int kMelFilterSize = 201;
 inline constexpr char kMelFiltersPath[] = "./model/mel_80_filters.txt";
