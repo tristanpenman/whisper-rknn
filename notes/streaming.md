@@ -215,7 +215,7 @@ The initial implementation will use a conservative configuration:
 - Agreement depth: two consecutive hypotheses.
 - Input source: an existing audio file delivered incrementally.
 
-Each update appends samples to the active buffer, preprocesses the window, runs the encoder and decoder, and submits the returned hypothesis to the agreement component. The C++ CLI selects the window with `--chunk-length`; Python uses `--chunk_length`. The chosen value must match the exported encoder and decoder shapes.
+Each update appends samples to the active buffer, preprocesses the window, runs the encoder and decoder, and submits the returned hypothesis to the agreement component. The context window length is derived from the encoder model dimensions.
 
 Independent, non-overlapping chunks must not be concatenated because words may be split at their boundaries. The active buffer must retain overlapping acoustic context between updates.
 
