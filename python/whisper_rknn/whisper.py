@@ -1,20 +1,20 @@
 import argparse
 
 import numpy as np
-import onnxruntime
 import scipy
 import soundfile as sf
 import torch
 import torch.nn.functional as F
-from rknn.api import RKNN
+
+from whisper_rknn.rknn_utils import (
+    load_model,
+    model_input_shapes,
+    release_model,
+)
 
 SAMPLE_RATE = 16000
 N_FFT = 400
 HOP_LENGTH = 160
-CHUNK_LENGTH = 20
-MAX_TOKENS = 12
-N_SAMPLES = CHUNK_LENGTH * SAMPLE_RATE
-MAX_LENGTH = CHUNK_LENGTH * 100
 N_MELS = 80
 MAX_INITIAL_TIMESTAMP_INDEX = 50
 
@@ -132,10 +132,9 @@ def read_vocab(vocab_path):
     return vocab
 
 
-def pad_or_trim(audio_array, chunk_length=CHUNK_LENGTH):
-    max_length = chunk_length * 100
-    x_mel = np.zeros((N_MELS, max_length), dtype=np.float32)
-    real_length = min(audio_array.shape[1], max_length)
+def pad_or_trim(audio_array, mel_frames):
+    x_mel = np.zeros((N_MELS, mel_frames), dtype=np.float32)
+    real_length = min(audio_array.shape[1], mel_frames)
     x_mel[:, :real_length] = audio_array[:, :real_length]
     return x_mel
 
@@ -242,8 +241,8 @@ def run_decoder(
     out_encoder,
     vocab,
     task_code,
+    max_tokens,
     enable_timestamps=False,
-    max_tokens=MAX_TOKENS,
 ):
     end_token = 50257  # tokenizer.eot
     initial_prompt = [50258, task_code, 50359]
@@ -283,44 +282,50 @@ def run_decoder(
     return result
 
 
-def init_model(model_path, target=None, device_id=None):
-    if model_path.endswith(".rknn"):
-        # Create RKNN object
-        model = RKNN()
+def model_dimensions(encoder_model, decoder_model):
+    encoder_inputs = model_input_shapes(encoder_model)
+    decoder_inputs = model_input_shapes(decoder_model)
 
-        # Load RKNN model
-        print("--> Loading model")
-        ret = model.load_rknn(model_path)
-        if ret != 0:
-            print(f'Load RKNN model "{model_path}" failed!')
-            exit(ret)
-        print("done")
-
-        # init runtime environment
-        print("--> Init runtime environment")
-        ret = model.init_runtime(target=target, device_id=device_id)
-        if ret != 0:
-            print("Init runtime environment failed")
-            exit(ret)
-        print("done")
-
-    elif model_path.endswith(".onnx"):
-        model = onnxruntime.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"]
+    encoder_shape = encoder_inputs.get("x")
+    token_shape = decoder_inputs.get("tokens")
+    decoder_audio_shape = decoder_inputs.get("audio")
+    if (
+        encoder_shape is None
+        or token_shape is None
+        or decoder_audio_shape is None
+    ):
+        raise ValueError("Models do not have the expected Whisper inputs")
+    if len(encoder_shape) != 3 or encoder_shape[:2] != [1, N_MELS]:
+        raise ValueError(f"Unexpected encoder input shape: {encoder_shape}")
+    if len(token_shape) != 2 or token_shape[0] != 1:
+        raise ValueError(f"Unexpected decoder token shape: {token_shape}")
+    if len(decoder_audio_shape) != 3 or decoder_audio_shape[0] != 1:
+        raise ValueError(
+            f"Unexpected decoder audio shape: {decoder_audio_shape}"
         )
 
-    return model
+    mel_frames = encoder_shape[2]
+    max_tokens = token_shape[1]
+    encoder_frames = mel_frames // 2
+    if mel_frames <= 0 or mel_frames % 2 != 0:
+        raise ValueError(f"Invalid encoder frame count: {mel_frames}")
+    if mel_frames * HOP_LENGTH % SAMPLE_RATE != 0:
+        raise ValueError(
+            f"Encoder input does not represent a whole number of seconds: "
+            f"{mel_frames} frames"
+        )
+    if max_tokens < 4:
+        raise ValueError(f"Decoder token input is too short: {max_tokens}")
+    if decoder_audio_shape[1] != encoder_frames:
+        raise ValueError(
+            "Encoder and decoder context lengths do not match: "
+            f"{encoder_frames} and {decoder_audio_shape[1]}"
+        )
+
+    return mel_frames * HOP_LENGTH // SAMPLE_RATE, mel_frames, max_tokens
 
 
-def release_model(model):
-    if "rknn" in str(type(model)):
-        model.release()
-    elif "onnx" in str(type(model)):
-        del model
-    model = None
-
-
-def load_array_from_file(filename):
+def load_array_from_file(filename, mel_frames):
     with open(filename, "r", encoding="utf-8") as file:
         data = file.readlines()
 
@@ -329,7 +334,7 @@ def load_array_from_file(filename):
         row = [float(num) for num in line.split()]
         array.extend(row)
 
-    return np.array(array).reshape((N_MELS, MAX_LENGTH))
+    return np.array(array).reshape((N_MELS, mel_frames))
 
 
 if __name__ == "__main__":
@@ -369,24 +374,7 @@ if __name__ == "__main__":
         action="store_true",
         help="include Whisper timestamp markers in the output",
     )
-    parser.add_argument(
-        "--chunk_length",
-        type=int,
-        default=CHUNK_LENGTH,
-        help=f"audio chunk length in seconds (default: {CHUNK_LENGTH})",
-    )
-    parser.add_argument(
-        "--max_tokens",
-        type=int,
-        default=MAX_TOKENS,
-        help=f"decoder token input length (default: {MAX_TOKENS})",
-    )
     args = parser.parse_args()
-
-    if args.chunk_length <= 0:
-        parser.error("--chunk_length must be greater than zero")
-    if args.max_tokens < 4:
-        parser.error("--max_tokens must be at least 4")
 
     # Set inputs
     if args.task == "en":
@@ -401,6 +389,22 @@ if __name__ == "__main__":
             "are supported. Please specify --task as en or zh\033[0m"
         )
         exit(1)
+    # Init models before preprocessing so their fixed input shapes determine
+    # the audio window and decoder token count.
+    encoder_model = load_model(
+        args.encoder_model_path, args.target, args.device_id
+    )
+    decoder_model = load_model(
+        args.decoder_model_path, args.target, args.device_id
+    )
+    chunk_length, mel_frames, max_tokens = model_dimensions(
+        encoder_model, decoder_model
+    )
+    print(
+        f"Model dimensions: {chunk_length}s audio, "
+        f"{max_tokens} decoder tokens"
+    )
+
     vocab = read_vocab(vocab_path)
     audio_data, sample_rate = sf.read(args.audio_path)
     channels = audio_data.ndim
@@ -408,24 +412,18 @@ if __name__ == "__main__":
     audio_data, sample_rate = ensure_sample_rate(audio_data, sample_rate)
     audio_array = np.array(audio_data, dtype=np.float32)
     audio_array = log_mel_spectrogram(audio_array, N_MELS).numpy()
-    x_mel = pad_or_trim(audio_array, args.chunk_length)
+    x_mel = pad_or_trim(audio_array, mel_frames)
     x_mel = np.expand_dims(x_mel, 0)
 
-    # Init/Encode/Decode
-    encoder_model = init_model(
-        args.encoder_model_path, args.target, args.device_id
-    )
-    decoder_model = init_model(
-        args.decoder_model_path, args.target, args.device_id
-    )
+    # Encode/Decode
     out_encoder = run_encoder(encoder_model, x_mel)
     result = run_decoder(
         decoder_model,
         out_encoder,
         vocab,
         task_code,
+        max_tokens,
         enable_timestamps=args.enable_timestamps,
-        max_tokens=args.max_tokens,
     )
     print("\nWhisper output:", result)
 
