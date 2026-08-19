@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="rk3588"
 DTYPE="fp"
-MAX_TOKENS="12"
+MAX_TOKENS=""
 OUTPUT_DIR="model"
 ONNX_ONLY=false
 FORCE=false
@@ -20,7 +20,7 @@ Arguments:
 Options:
   --target <platform>     RKNN target (default: rk3588)
   --dtype <fp|i8|u8>      RKNN output type (default: fp)
-  --max-tokens <count>    Fixed decoder input length (default: 12)
+  --max-tokens <count>    Fixed decoder input length (default: model-derived)
   --output-dir <path>     Output directory (default: model)
   --onnx-only             Stop after ONNX export
   --force                 Replace existing output files
@@ -89,7 +89,7 @@ if [[ "$DTYPE" != "fp" && "$DTYPE" != "i8" && "$DTYPE" != "u8" ]]; then
   exit 2
 fi
 
-if [[ ! "$MAX_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
+if [[ -n "$MAX_TOKENS" && ! "$MAX_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--max-tokens must be a positive integer" >&2
   exit 2
 fi
@@ -143,9 +143,11 @@ EXPORT_ARGS=(
   python -m whisper_rknn.export_onnx
   --model-type "$MODEL_ARG"
   --chunk-length "$CHUNK_LENGTH"
-  --max-tokens "$MAX_TOKENS"
   --output-dir "$OUTPUT_ARG"
 )
+if [[ -n "$MAX_TOKENS" ]]; then
+  EXPORT_ARGS+=(--max-tokens "$MAX_TOKENS")
+fi
 if [[ "$FORCE" == true ]]; then
   EXPORT_ARGS+=(--force)
 elif [[ "$ONNX_ONLY" == false && ( -e "$ENCODER_RKNN" || -e "$DECODER_RKNN" ) ]]; then

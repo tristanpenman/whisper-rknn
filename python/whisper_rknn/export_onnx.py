@@ -113,7 +113,10 @@ def parse_args():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=12,
+        help=(
+            "fixed decoder token input length "
+            "(default: half the model text context)"
+        ),
     )
     parser.add_argument(
         "--output-dir",
@@ -126,7 +129,7 @@ def parse_args():
         help="replace existing ONNX models",
     )
     args = parser.parse_args()
-    if args.max_tokens <= 0:
+    if args.max_tokens is not None and args.max_tokens <= 0:
         parser.error("--max-tokens must be greater than zero")
     return parser, args
 
@@ -134,6 +137,8 @@ def parse_args():
 def main():
     parser, args = parse_args()
     model = setup_model(args.model_type)
+    if args.max_tokens is None:
+        args.max_tokens = model.dims.n_text_ctx // 2
     if args.max_tokens > model.dims.n_text_ctx:
         parser.error(
             f"--max-tokens cannot exceed the model text context of "

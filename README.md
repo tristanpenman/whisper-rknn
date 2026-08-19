@@ -27,6 +27,7 @@ Streaming transcription and microphone input are planned but are not yet impleme
 * [Python Implementation](#python-implementation)
   * [Run the Python Demo](#run-the-python-demo)
   * [Export ONNX Models](#export-onnx-models)
+  * [Validation](#validation)
 * [Linux CLI](#linux-cli)
   * [Build](#build)
   * [Run](#run)
@@ -213,8 +214,7 @@ The `whisper_rknn.export_onnx` module exports separate, fixed-shape Whisper enco
 python -m whisper_rknn.export_onnx \
   --model-type base \
   --chunk-length 20 \
-  --n-mels 80 \
-  --max-tokens 12
+  --n-mels 80
 ```
 
 The exporter downloads the requested OpenAI Whisper checkpoint when it is not already cached, so the container must have network access on the first run. It writes the resulting pair to:
@@ -224,7 +224,11 @@ model/whisper_encoder_base_20s.onnx
 model/whisper_decoder_base_20s.onnx
 ```
 
-The paths are relative to the repository root. The exporter accepts any whole-second window from 5 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. `--chunk-length` must be a whole number of seconds within that range, so fractional and non-numeric values are rejected, as are windows longer than the selected model's audio context. The `--n-mels` option defaults to `80`. `--max-tokens` sets the decoder's fixed token input length and defaults to `12`; it cannot exceed the selected model's text context size. Existing files are preserved unless `--force` is passed.
+The paths are relative to the repository root. The exporter accepts any whole-second window from 5 to 30 seconds and slices the encoder's positional embeddings to the selected fixed input length; it does not modify the installed `openai-whisper` package. `--chunk-length` must be a whole number of seconds within that range, so fractional and non-numeric values are rejected, as are windows longer than the selected model's audio context. The `--n-mels` option defaults to `80`.
+
+By default, the decoder's fixed token input length is half of the selected model's text context, matching Whisper's normal decoding budget. Pass `--max-tokens` to override it; the value cannot exceed the model's text context size. Existing files are preserved unless `--force` is passed.
+
+### Validation
 
 The current application is validated only with the Whisper base model, 80 Mel channels, and a 20-second window. Other model types, Mel counts, or window lengths require compatible model tensor shapes. Both the Python and C++ CLIs derive the audio window and decoder token count from the models. The encoder width is `384` for tiny, `512` for base, and `1024` for medium. Treat other configurations as unsupported until their conversion and inference results have been validated.
 
