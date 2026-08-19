@@ -7,13 +7,14 @@
 //     http://www.apache.org/licenses/LICENSE-2.0
 
 #include <algorithm>
-#include <cstdio>
 #include <cstring>
+#include <iomanip>
 #include <iostream>
 #include <vector>
 
 #include "audio_utils.h"
 #include "easy_timer.h"
+#include "logger.h"
 #include "process.h"
 #include "whisper.h"
 
@@ -31,11 +32,9 @@ void logHypothesis(
     int endFrame,
     const TranscriptionHypothesis& hypothesis)
 {
-    std::printf(
-        "\nStreaming iteration %d (audio %.1f-%.1f seconds)\n",
-        iteration,
-        firstFrame / static_cast<double>(kSampleRate),
-        endFrame / static_cast<double>(kSampleRate));
+    LOG(INFO) << std::fixed << std::setprecision(1) << "Streaming iteration " << iteration
+              << " (audio " << firstFrame / static_cast<double>(kSampleRate) << "-"
+              << endFrame / static_cast<double>(kSampleRate) << " seconds)";
     std::cout << "Whisper output token IDs: ";
     for (const int tokenId : hypothesis.tokenIds) {
         std::cout << tokenId << ' ';
@@ -47,6 +46,8 @@ void logHypothesis(
 
 int main(int argc, char** argv)
 {
+    Logger::configure();
+
     bool enableNeon = true;
     bool enableTimestamps = false;
     int argumentOffset = 0;
@@ -63,10 +64,9 @@ int main(int argc, char** argv)
     }
 
     if (argc != 5 + argumentOffset) {
-        std::printf(
-            "%s [--disable-neon] [--enable-timestamps] "
-            "<encoder_path> <decoder_path> <task> <audio_path>\n",
-            argv[0]);
+        LOG(ERROR) << "Usage: " << argv[0]
+                   << " [--disable-neon] [--enable-timestamps]"
+                      " <encoder_path> <decoder_path> <task> <audio_path>";
         return -1;
     }
 
@@ -83,9 +83,8 @@ int main(int argc, char** argv)
         vocabPath = kChineseVocabPath;
         taskCode = kChineseTaskCode;
     } else {
-        std::printf(
-            "\n\033[1;33mCurrently only English or Chinese recognition tasks are supported. "
-            "Please specify <task> as en or zh.\033[0m\n");
+        LOG(ERROR) << "Currently only English or Chinese recognition tasks are supported. "
+                      "Please specify <task> as en or zh.";
         return -1;
     }
 
@@ -100,14 +99,14 @@ int main(int argc, char** argv)
     timer.tik();
     result = readAudio(audioPath, &inputAudio);
     if (result != 0) {
-        std::printf("Failed to read audio: result=%d, path=%s\n", result, audioPath);
+        LOG(ERROR) << "Failed to read audio: result=" << result << ", path=" << audioPath;
         goto cleanup;
     }
 
     if (inputAudio.numChannels == 2) {
         result = convertChannels(&inputAudio);
         if (result != 0) {
-            std::printf("Failed to convert audio channels: result=%d\n", result);
+            LOG(ERROR) << "Failed to convert audio channels: result=" << result;
             goto cleanup;
         }
     }
@@ -115,7 +114,7 @@ int main(int argc, char** argv)
     if (inputAudio.sampleRate != kSampleRate) {
         result = resampleAudio(&inputAudio, inputAudio.sampleRate, kSampleRate);
         if (result != 0) {
-            std::printf("Failed to resample audio: result=%d\n", result);
+            LOG(ERROR) << "Failed to resample audio: result=" << result;
             goto cleanup;
         }
     }
@@ -128,16 +127,14 @@ int main(int argc, char** argv)
         melFilters.data(),
         static_cast<int>(melFilters.size()));
     if (result != 0) {
-        std::printf(
-            "Failed to read Mel filters: result=%d, path=%s\n",
-            result,
-            kMelFiltersPath);
+        LOG(ERROR) << "Failed to read Mel filters: result=" << result
+                   << ", path=" << kMelFiltersPath;
         goto cleanup;
     }
 
     result = readVocab(vocabPath, vocab.data());
     if (result != 0) {
-        std::printf("Failed to read vocabulary: result=%d, path=%s\n", result, vocabPath);
+        LOG(ERROR) << "Failed to read vocabulary: result=" << result << ", path=" << vocabPath;
         goto cleanup;
     }
     timer.tok();
@@ -146,10 +143,8 @@ int main(int argc, char** argv)
     timer.tik();
     result = initializeWhisperModel(encoderPath, &appContext.encoderContext);
     if (result != 0) {
-        std::printf(
-            "Failed to initialize Whisper encoder: result=%d, path=%s\n",
-            result,
-            encoderPath);
+        LOG(ERROR) << "Failed to initialize Whisper encoder: result=" << result
+                   << ", path=" << encoderPath;
         goto cleanup;
     }
     timer.tok();
@@ -160,21 +155,17 @@ int main(int argc, char** argv)
         goto cleanup;
     }
     if (chunkLength < kUpdateLengthSeconds) {
-        std::printf(
-            "Model chunk length must be at least %d seconds\n",
-            kUpdateLengthSeconds);
+        LOG(ERROR) << "Model chunk length must be at least " << kUpdateLengthSeconds << " seconds";
         result = -1;
         goto cleanup;
     }
-    std::printf("Model chunk length: %d seconds\n", chunkLength);
+    LOG(INFO) << "Model chunk length: " << chunkLength << " seconds";
 
     timer.tik();
     result = initializeWhisperModel(decoderPath, &appContext.decoderContext);
     if (result != 0) {
-        std::printf(
-            "Failed to initialize Whisper decoder: result=%d, path=%s\n",
-            result,
-            decoderPath);
+        LOG(ERROR) << "Failed to initialize Whisper decoder: result=" << result
+                   << ", path=" << decoderPath;
         goto cleanup;
     }
     timer.tok();
@@ -209,7 +200,7 @@ int main(int argc, char** argv)
                 enableTimestamps,
                 hypothesis);
             if (result != 0) {
-                std::printf("Whisper inference failed: result=%d\n", result);
+                LOG(ERROR) << "Whisper inference failed: result=" << result;
                 goto cleanup;
             }
             timer.tok();
@@ -224,11 +215,11 @@ int main(int argc, char** argv)
 cleanup:
     result = releaseWhisperModel(&appContext.encoderContext);
     if (result != 0) {
-        std::printf("Failed to release Whisper encoder: result=%d\n", result);
+        LOG(ERROR) << "Failed to release Whisper encoder: result=" << result;
     }
     result = releaseWhisperModel(&appContext.decoderContext);
     if (result != 0) {
-        std::printf("Failed to release Whisper decoder: result=%d\n", result);
+        LOG(ERROR) << "Failed to release Whisper decoder: result=" << result;
     }
 
     return 0;

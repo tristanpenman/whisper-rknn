@@ -18,13 +18,13 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "logger.h"
 #include "rknn_utils.h"
 #include "string_utils.h"
 
@@ -120,20 +120,20 @@ int runEncoder(
 
     int result = rknn_inputs_set(appContext->rknnContext, 1, inputs);
     if (result < 0) {
-        std::printf("rknn_inputs_set failed: %s\n", rknn_utils::rknnErrorMessage(result));
+        LOG(ERROR) << "rknn_inputs_set failed: " << rknn_utils::rknnErrorMessage(result);
         goto cleanup;
     }
 
     result = rknn_run(appContext->rknnContext, nullptr);
     if (result < 0) {
-        std::printf("rknn_run failed: %s\n", rknn_utils::rknnErrorMessage(result));
+        LOG(ERROR) << "rknn_run failed: " << rknn_utils::rknnErrorMessage(result);
         goto cleanup;
     }
 
     outputs[0].want_float = 1;
     result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
     if (result < 0) {
-        std::printf("rknn_outputs_get failed: %s\n", rknn_utils::rknnErrorMessage(result));
+        LOG(ERROR) << "rknn_outputs_get failed: " << rknn_utils::rknnErrorMessage(result);
         goto cleanup;
     }
 
@@ -158,15 +158,13 @@ int runDecoder(
     // The decoder graph is exported with a fixed token input length, so the
     // model itself determines how many tokens can be decoded.
     if (appContext->inputAttributes.empty()) {
-        std::printf("Decoder model does not report any input tensors\n");
+        LOG(ERROR) << "Decoder model does not report any input tensors";
         return -1;
     }
     const int tokenInputLength = static_cast<int>(appContext->inputAttributes[0].n_elems);
     if (tokenInputLength <= initialPromptLength) {
-        std::printf(
-            "Decoder token input length is %d, but at least %d is required\n",
-            tokenInputLength,
-            initialPromptLength + 1);
+        LOG(ERROR) << "Decoder token input length is " << tokenInputLength << ", but at least "
+                   << initialPromptLength + 1 << " is required";
         return -1;
     }
 
@@ -201,20 +199,20 @@ int runDecoder(
 
         result = rknn_inputs_set(appContext->rknnContext, 2, inputs);
         if (result < 0) {
-            std::printf("rknn_inputs_set failed: %s\n", rknn_utils::rknnErrorMessage(result));
+            LOG(ERROR) << "rknn_inputs_set failed: " << rknn_utils::rknnErrorMessage(result);
             goto cleanup;
         }
 
         result = rknn_run(appContext->rknnContext, nullptr);
         if (result < 0) {
-            std::printf("rknn_run failed: %s\n", rknn_utils::rknnErrorMessage(result));
+            LOG(ERROR) << "rknn_run failed: " << rknn_utils::rknnErrorMessage(result);
             goto cleanup;
         }
 
         outputs[0].want_float = 1;
         result = rknn_outputs_get(appContext->rknnContext, 1, outputs, nullptr);
         if (result < 0) {
-            std::printf("rknn_outputs_get failed: %s\n", rknn_utils::rknnErrorMessage(result));
+            LOG(ERROR) << "rknn_outputs_get failed: " << rknn_utils::rknnErrorMessage(result);
             goto cleanup;
         }
 
@@ -256,22 +254,22 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
     rknn_context context = 0;
     int result = rknn_init(&context, const_cast<char*>(modelPath), 0, 0, nullptr);
     if (result < 0) {
-        std::printf("rknn_init failed: %s\n", rknn_utils::rknnErrorMessage(result));
+        LOG(ERROR) << "rknn_init failed: " << rknn_utils::rknnErrorMessage(result);
         return -1;
     }
 
     rknn_input_output_num ioCount = {};
     result = rknn_query(context, RKNN_QUERY_IN_OUT_NUM, &ioCount, sizeof(ioCount));
     if (result != RKNN_SUCC) {
-        std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
+        LOG(ERROR) << "rknn_query failed: " << rknn_utils::rknnErrorMessage(result);
         rknn_destroy(context);
         return -1;
     }
     rknn_utils::logRknnVersion(context);
-    std::printf("model input count: %d, output count: %d\n", ioCount.n_input, ioCount.n_output);
+    LOG(INFO) << "Model input count: " << ioCount.n_input << ", output count: " << ioCount.n_output;
 
     std::vector<rknn_tensor_attr> inputAttributes(ioCount.n_input);
-    std::printf("input tensors:\n");
+    LOG(INFO) << "Input tensors:";
     for (std::uint32_t i = 0; i < ioCount.n_input; ++i) {
         inputAttributes[i].index = i;
         result = rknn_query(
@@ -280,15 +278,15 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
             &inputAttributes[i],
             sizeof(rknn_tensor_attr));
         if (result != RKNN_SUCC) {
-            std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
+            LOG(ERROR) << "rknn_query failed: " << rknn_utils::rknnErrorMessage(result);
             rknn_destroy(context);
             return -1;
         }
-        std::printf("  %s\n", rknn_utils::tensorAttrToString(inputAttributes[i]).c_str());
+        LOG(INFO) << "  " << rknn_utils::tensorAttrToString(inputAttributes[i]);
     }
 
     std::vector<rknn_tensor_attr> outputAttributes(ioCount.n_output);
-    std::printf("output tensors:\n");
+    LOG(INFO) << "Output tensors:";
     for (std::uint32_t i = 0; i < ioCount.n_output; ++i) {
         outputAttributes[i].index = i;
         result = rknn_query(
@@ -297,11 +295,11 @@ int initializeWhisperModel(const char* modelPath, RknnAppContext* appContext)
             &outputAttributes[i],
             sizeof(rknn_tensor_attr));
         if (result != RKNN_SUCC) {
-            std::printf("rknn_query failed: %s\n", rknn_utils::rknnErrorMessage(result));
+            LOG(ERROR) << "rknn_query failed: " << rknn_utils::rknnErrorMessage(result);
             rknn_destroy(context);
             return -1;
         }
-        std::printf("  %s\n", rknn_utils::tensorAttrToString(outputAttributes[i]).c_str());
+        LOG(INFO) << "  " << rknn_utils::tensorAttrToString(outputAttributes[i]);
     }
 
     appContext->rknnContext = context;
@@ -326,7 +324,7 @@ int releaseWhisperModel(RknnAppContext* appContext)
 int getWhisperChunkLength(const RknnAppContext& encoderContext, int* chunkLength)
 {
     if (chunkLength == nullptr || encoderContext.inputAttributes.empty()) {
-        std::printf("Encoder model does not report an input tensor\n");
+        LOG(ERROR) << "Encoder model does not report an input tensor";
         return -1;
     }
 
@@ -334,9 +332,8 @@ int getWhisperChunkLength(const RknnAppContext& encoderContext, int* chunkLength
     constexpr int kElementsPerSecond = kNumMels * kMelFramesPerSecond;
     const std::uint32_t inputElements = encoderContext.inputAttributes[0].n_elems;
     if (inputElements == 0 || inputElements % kElementsPerSecond != 0) {
-        std::printf(
-            "Encoder input has %u elements; expected 80 Mel bins and a whole number of seconds\n",
-            inputElements);
+        LOG(ERROR) << "Encoder input has " << inputElements
+                   << " elements; expected 80 Mel bins and a whole number of seconds";
         return -1;
     }
 
@@ -354,7 +351,7 @@ int runWhisperInference(
 {
     if (appContext->encoderContext.inputAttributes.empty()
         || appContext->encoderContext.outputAttributes.empty()) {
-        std::printf("Encoder model does not report its tensor dimensions\n");
+        LOG(ERROR) << "Encoder model does not report its tensor dimensions";
         return -1;
     }
     const int encoderInputSize =
@@ -362,7 +359,7 @@ int runWhisperInference(
     const int encoderOutputSize =
         static_cast<int>(appContext->encoderContext.outputAttributes[0].n_elems);
     if (audioData.size() < static_cast<std::size_t>(kNumMels * encoderInputSize)) {
-        std::printf("Mel spectrogram is smaller than the encoder input tensor\n");
+        LOG(ERROR) << "Mel spectrogram is smaller than the encoder input tensor";
         return -1;
     }
     std::vector<float> encoderOutput(encoderOutputSize);
@@ -378,7 +375,7 @@ int runWhisperInference(
         encoderOutputSize,
         encoderOutput.data());
     if (result != 0) {
-        std::printf("Encoder inference failed: %d\n", result);
+        LOG(ERROR) << "Encoder inference failed: " << result;
         return result;
     }
 
@@ -391,7 +388,7 @@ int runWhisperInference(
         encoderOutputSize,
         decodedHypothesis);
     if (result != 0) {
-        std::printf("Decoder inference failed: %d\n", result);
+        LOG(ERROR) << "Decoder inference failed: " << result;
         return result;
     }
 
