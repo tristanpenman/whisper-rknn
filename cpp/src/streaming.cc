@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
-#include <iostream>
+#include <sstream>
 #include <vector>
 
 #include "audio_utils.h"
@@ -25,6 +25,32 @@ constexpr char kChineseVocabPath[] = "./model/vocab_zh.txt";
 constexpr int kEnglishTaskCode = 50259;
 constexpr int kChineseTaskCode = 50260;
 constexpr int kUpdateLengthSeconds = 5;
+constexpr int kContextLengthSeconds = 1;
+constexpr int kEndOfTextToken = 50257;
+constexpr int kTimestampBeginToken = 50364;
+constexpr int kTimestampFrames = kSampleRate / 50;
+
+int firstCompletedSegmentFrames(
+    const std::vector<int>& tokenIds,
+    int minimumEndFrame)
+{
+    bool hasText = false;
+    for (const int tokenId : tokenIds) {
+        if (tokenId >= kTimestampBeginToken) {
+            if (hasText) {
+                const int endFrame = (tokenId - kTimestampBeginToken) * kTimestampFrames;
+                if (endFrame > minimumEndFrame) {
+                    return endFrame;
+                }
+                hasText = false;
+            }
+        } else if (tokenId != kEndOfTextToken) {
+            hasText = true;
+        }
+    }
+
+    return 0;
+}
 
 void logHypothesis(
     int iteration,
@@ -35,11 +61,12 @@ void logHypothesis(
     LOG(INFO) << std::fixed << std::setprecision(1) << "Streaming iteration " << iteration
               << " (audio " << firstFrame / static_cast<double>(kSampleRate) << "-"
               << endFrame / static_cast<double>(kSampleRate) << " seconds)";
-    std::cout << "Whisper output token IDs: ";
+    std::ostringstream tokenIds;
     for (const int tokenId : hypothesis.tokenIds) {
-        std::cout << tokenId << ' ';
+        tokenIds << tokenId << ' ';
     }
-    std::cout << "\nWhisper output text: " << hypothesis.text << '\n';
+    LOG(INFO) << "Whisper output token IDs: " << tokenIds.str();
+    LOG(INFO) << "Whisper output text: " << hypothesis.text;
 }
 
 }  // namespace
@@ -174,11 +201,12 @@ int main(int argc, char** argv)
     {
         const int updateFrames = kUpdateLengthSeconds * kSampleRate;
         const int windowFrames = chunkLength * kSampleRate;
+        const int contextFrames = kContextLengthSeconds * kSampleRate;
+        int firstFrame = 0;
+        int endFrame = std::min(updateFrames, inputAudio.numFrames);
+        int committedEndFrame = 0;
         int iteration = 0;
-        for (int endFrame = std::min(updateFrames, inputAudio.numFrames);
-             endFrame > 0;
-             endFrame = std::min(endFrame + updateFrames, inputAudio.numFrames)) {
-            const int firstFrame = std::max(0, endFrame - windowFrames);
+        while (endFrame > firstFrame) {
             AudioBuffer activeAudio = {
                 std::vector<float>(
                     inputAudio.data.begin() + firstFrame,
@@ -206,7 +234,21 @@ int main(int argc, char** argv)
             timer.tok();
             timer.printTime("Run Whisper inference");
             logHypothesis(++iteration, firstFrame, endFrame, hypothesis);
-            if (endFrame == inputAudio.numFrames) {
+
+            const int segmentEndFrame = std::min(
+                firstCompletedSegmentFrames(
+                    hypothesis.tokenIds,
+                    committedEndFrame - firstFrame),
+                endFrame - firstFrame);
+            if (segmentEndFrame > 0) {
+                committedEndFrame = firstFrame + segmentEndFrame;
+                firstFrame = std::max(0, committedEndFrame - contextFrames);
+            }
+
+            if (endFrame < inputAudio.numFrames && endFrame - firstFrame < windowFrames) {
+                endFrame = std::min(
+                    {endFrame + updateFrames, firstFrame + windowFrames, inputAudio.numFrames});
+            } else if (segmentEndFrame == 0) {
                 break;
             }
         }
