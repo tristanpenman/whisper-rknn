@@ -38,7 +38,7 @@ if [[ -z "${DEVICE_IP}" ]]; then
 Usage: $0 <device-ip> [model-dir] [rknn-decoder] [rknn-encoder] [sample-path]
 
 Arguments:
-  device-ip    IP address (or host) of the target device, as used by `adb connect`.
+  device-ip    IP address (or host) of the target device, as used by 'adb connect'.
   model-dir    Directory containing the RKNN model files (default model/).
   rknn-decoder Path to the RKNN decoder model (default <model-dir>/whisper_decoder_base_20s.rknn)
   rknn-encoder Path to the RKNN encoder model (default <model-dir>/whisper_encoder_base_20s.rknn)
