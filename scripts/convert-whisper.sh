@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONTAINER="python"
 TARGET="rk3588"
 DTYPE="fp"
 MAX_TOKENS=""
@@ -159,7 +160,8 @@ echo "=== Export Whisper ${MODEL_TYPE} with a ${CHUNK_LENGTH}-second window ==="
 docker compose run --rm --remove-orphans --build \
   --user "$(id -u):$(id -g)" \
   -e HOME=/workspace/.cache/home \
-  python "${EXPORT_ARGS[@]}"
+  $CONTAINER \
+  "${EXPORT_ARGS[@]}"
 
 if [[ "$ONNX_ONLY" == true ]]; then
   exit 0
@@ -169,14 +171,20 @@ echo "=== Convert encoder to RKNN (${TARGET}, ${DTYPE}) ==="
 docker compose run --rm --remove-orphans \
   --user "$(id -u):$(id -g)" \
   -e HOME=/workspace/.cache/home \
-  python python -m whisper_rknn.convert \
+  $CONTAINER \
+  python -m whisper_rknn.convert \
     "$ENCODER_ONNX" "$TARGET" "$DTYPE" "$ENCODER_RKNN"
 
 echo "=== Convert decoder to RKNN (${TARGET}, ${DTYPE}) ==="
 docker compose run --rm --remove-orphans \
   --user "$(id -u):$(id -g)" \
   -e HOME=/workspace/.cache/home \
-  python python -m whisper_rknn.convert \
+  $CONTAINER \
+  python -m whisper_rknn.convert \
     "$DECODER_ONNX" "$TARGET" "$DTYPE" "$DECODER_RKNN"
 
-echo "Created ${ENCODER_ONNX}, ${DECODER_ONNX}, ${ENCODER_RKNN}, and ${DECODER_RKNN}"
+echo "Created:"
+echo "--> ${ENCODER_ONNX}"
+echo "--> ${DECODER_ONNX}"
+echo "--> ${ENCODER_RKNN}"
+echo "--> ${DECODER_RKNN}"

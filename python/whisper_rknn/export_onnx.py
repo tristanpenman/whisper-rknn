@@ -197,10 +197,12 @@ def main():
 
     simplify_onnx_model(encoder_path)
     simplify_onnx_model(decoder_path)
+    print(f"Encoder model:  {encoder_path}")
     print(f"Encoder input:  {tuple(x_mel.shape)}")
     print(f"Encoder output: {tuple(encoder_output.shape)}")
-    print(f"Encoder model:  {encoder_path}")
     print(f"Decoder model:  {decoder_path}")
+    print(f"Decoder input:  {tuple(x_tokens.shape)}, {tuple(encoder_output.shape)}")
+    print(f"Decoder output: {tuple(model.decoder(x_tokens, encoder_output).shape)}")
 
 
 if __name__ == "__main__":

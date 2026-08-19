@@ -2,9 +2,7 @@ import sys
 
 from rknn.api import RKNN
 
-
 DEFAULT_QUANT = False
-
 
 
 def parse_arg():
