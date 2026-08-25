@@ -13,9 +13,12 @@
 #include <vector>
 
 #include "audio_utils.h"
+#include "candidate.h"
 #include "easy_timer.h"
+#include "local_agreement.h"
 #include "logger.h"
 #include "process.h"
+#include "string_utils.h"
 #include "whisper.h"
 
 namespace {
@@ -26,47 +29,52 @@ constexpr int kEnglishTaskCode = 50259;
 constexpr int kChineseTaskCode = 50260;
 constexpr int kUpdateLengthSeconds = 5;
 constexpr int kContextLengthSeconds = 1;
-constexpr int kEndOfTextToken = 50257;
-constexpr int kTimestampBeginToken = 50364;
-constexpr int kTimestampFrames = kSampleRate / 50;
 
-int firstCompletedSegmentFrames(
+std::string renderTokens(
     const std::vector<int>& tokenIds,
-    int minimumEndFrame)
+    const std::vector<VocabEntry>& vocab,
+    bool decodeChinese)
 {
-    bool hasText = false;
+    std::string text;
     for (const int tokenId : tokenIds) {
-        if (tokenId >= kTimestampBeginToken) {
-            if (hasText) {
-                const int endFrame = (tokenId - kTimestampBeginToken) * kTimestampFrames;
-                if (endFrame > minimumEndFrame) {
-                    return endFrame;
-                }
-                hasText = false;
-            }
-        } else if (tokenId != kEndOfTextToken) {
-            hasText = true;
+        if (tokenId >= 0 && tokenId < static_cast<int>(vocab.size())) {
+            text += vocab[tokenId].token;
         }
     }
-
-    return 0;
+    replaceSubstring(text, "\u0120", " ");
+    replaceSubstring(text, "\n", "");
+    if (decodeChinese && !text.empty()) {
+        text = decodeBase64(text);
+    }
+    return text;
 }
 
-void logHypothesis(
+std::string formatTokenIds(const std::vector<int>& tokenIds)
+{
+    std::ostringstream output;
+    for (const int tokenId : tokenIds) {
+        output << tokenId << ' ';
+    }
+    return output.str();
+}
+
+void logStreamingUpdate(
     int iteration,
     int firstFrame,
     int endFrame,
-    const TranscriptionHypothesis& hypothesis)
+    const LocalAgreementUpdate& update,
+    const std::vector<VocabEntry>& vocab,
+    bool decodeChinese)
 {
     LOG(INFO) << std::fixed << std::setprecision(1) << "Streaming iteration " << iteration
               << " (audio " << firstFrame / static_cast<double>(kSampleRate) << "-"
               << endFrame / static_cast<double>(kSampleRate) << " seconds)";
-    std::ostringstream tokenIds;
-    for (const int tokenId : hypothesis.tokenIds) {
-        tokenIds << tokenId << ' ';
-    }
-    LOG(INFO) << "Whisper output token IDs: " << tokenIds.str();
-    LOG(INFO) << "Whisper output text: " << hypothesis.text;
+    LOG(INFO) << "Committed token IDs: " << formatTokenIds(update.committedTokens);
+    LOG(INFO) << "Committed text: "
+              << renderTokens(update.committedTokens, vocab, decodeChinese);
+    LOG(INFO) << "Provisional token IDs: " << formatTokenIds(update.provisionalTokens);
+    LOG(INFO) << "Provisional text: "
+              << renderTokens(update.provisionalTokens, vocab, decodeChinese);
 }
 
 }  // namespace
@@ -102,6 +110,7 @@ int main(int argc, char** argv)
     const char* task = argv[3 + argumentOffset];
     const char* audioPath = argv[4 + argumentOffset];
     const char* vocabPath = nullptr;
+    bool decodeChinese = false;
     int taskCode = 0;
     if (std::strcmp(task, "en") == 0) {
         vocabPath = kEnglishVocabPath;
@@ -109,6 +118,7 @@ int main(int argc, char** argv)
     } else if (std::strcmp(task, "zh") == 0) {
         vocabPath = kChineseVocabPath;
         taskCode = kChineseTaskCode;
+        decodeChinese = true;
     } else {
         LOG(ERROR) << "Currently only English or Chinese recognition tasks are supported. "
                       "Please specify <task> as en or zh.";
@@ -202,24 +212,32 @@ int main(int argc, char** argv)
         const int updateFrames = kUpdateLengthSeconds * kSampleRate;
         const int windowFrames = chunkLength * kSampleRate;
         const int contextFrames = kContextLengthSeconds * kSampleRate;
-        int firstFrame = 0;
-        int endFrame = std::min(updateFrames, inputAudio.numFrames);
+
+        // The committed end frame represents the furthest point in the audio that has been finalized.
         int committedEndFrame = 0;
         int iteration = 0;
+        int firstFrame = 0;
+        int endFrame = std::min(updateFrames, inputAudio.numFrames);
+
+        // The LocalAgreement object tracks the agreed prefix across successive transcription hypotheses.
+        LocalAgreement agreement;
+
         while (endFrame > firstFrame) {
+            // Prepare the active audio segment for processing, excluding any context frames from the previous segment.
             AudioBuffer activeAudio = {
-                std::vector<float>(
-                    inputAudio.data.begin() + firstFrame,
-                    inputAudio.data.begin() + endFrame),
+                std::vector<float>(inputAudio.data.begin() + firstFrame, inputAudio.data.begin() + endFrame),
                 endFrame - firstFrame,
                 1,
                 kSampleRate,
             };
+
+            // Preprocess the active audio segment into Mel spectrogram features
             std::vector<float> audioData(kNumMels * windowFrames / kHopLength, 0.0f);
-            TranscriptionHypothesis hypothesis;
+            preprocessAudio(&activeAudio, melFilters.data(), audioData, chunkLength, enableNeon);
             timer.tik();
-            preprocessAudio(
-                &activeAudio, melFilters.data(), audioData, chunkLength, enableNeon);
+
+            // Run Whisper inference on the preprocessed audio data to generate a transcription hypothesis
+            TranscriptionHypothesis hypothesis;
             result = runWhisperInference(
                 &appContext,
                 audioData,
@@ -233,25 +251,50 @@ int main(int argc, char** argv)
             }
             timer.tok();
             timer.printTime("Run Whisper inference");
-            logHypothesis(++iteration, firstFrame, endFrame, hypothesis);
 
-            const int segmentEndFrame = std::min(
-                firstCompletedSegmentFrames(
-                    hypothesis.tokenIds,
-                    committedEndFrame - firstFrame),
-                endFrame - firstFrame);
-            if (segmentEndFrame > 0) {
-                committedEndFrame = firstFrame + segmentEndFrame;
+            // Generate an agreement candidate from the transcription hypothesis
+            candidate::AgreementCandidate candidate;
+            if (enableTimestamps) {
+                candidate = candidate::timestampedTextTokens(
+                    hypothesis.tokenIds, firstFrame, endFrame, committedEndFrame);
+            } else {
+                candidate.tokenIds = candidate::textTokens(hypothesis.tokenIds);
+            }
+
+            // Remove any tokens from the candidate that have already been committed in previous iterations
+            candidate::removeCommittedPrefix(candidate, agreement.committedTokens());
+
+            // Update the local agreement with the new candidate tokens
+            const LocalAgreementUpdate update = agreement.update(candidate.tokenIds);
+            logStreamingUpdate(++iteration, firstFrame, endFrame, update, vocab, decodeChinese);
+
+            // Update the committed end frame based on the new candidate and agreement update.
+            // This is used to determine how much audio should be trimmed from the beginning of the input buffer.
+            const int previousCommittedEndFrame = committedEndFrame;
+            if (enableTimestamps) {
+                committedEndFrame = candidate::committedSegmentEndFrame(
+                    candidate, update.committedTokens.size(), committedEndFrame);
+            }
+            if (committedEndFrame > previousCommittedEndFrame) {
                 firstFrame = std::max(0, committedEndFrame - contextFrames);
             }
 
             if (endFrame < inputAudio.numFrames && endFrame - firstFrame < windowFrames) {
-                endFrame = std::min(
-                    {endFrame + updateFrames, firstFrame + windowFrames, inputAudio.numFrames});
-            } else if (segmentEndFrame == 0) {
+                endFrame = std::min({
+                    endFrame + updateFrames,
+                    firstFrame + windowFrames,
+                    inputAudio.numFrames
+                });
+            } else if (committedEndFrame == previousCommittedEndFrame) {
                 break;
             }
         }
+
+        const LocalAgreementUpdate finalUpdate = agreement.finish();
+        LOG(INFO) << "Final committed token IDs: "
+                  << formatTokenIds(finalUpdate.committedTokens);
+        LOG(INFO) << "Final committed text: "
+                  << renderTokens(finalUpdate.committedTokens, vocab, decodeChinese);
     }
 
 cleanup:

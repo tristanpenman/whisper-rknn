@@ -112,6 +112,7 @@ add_executable(whisper-rknn
 
 add_executable(whisper-rknn-streaming
     cpp/src/audio_utils.cc
+    cpp/src/candidate.c
     cpp/src/file_utils.cc
     cpp/src/local_agreement.cc
     cpp/src/logger.cc
@@ -121,6 +122,9 @@ add_executable(whisper-rknn-streaming
     cpp/src/string_utils.cc
     cpp/src/whisper.cc
 )
+
+# candidate.c exposes a C++ API despite retaining the requested .c filename.
+set_source_files_properties(cpp/src/candidate.c PROPERTIES LANGUAGE CXX)
 
 if(WHISPER_RKNN_ARCH STREQUAL "aarch64" OR WHISPER_RKNN_ARCH STREQUAL "arm64-v8a")
     target_compile_definitions(whisper-rknn PRIVATE ENABLE_NEON=1)
@@ -200,6 +204,7 @@ if(BUILD_TESTING)
 
     add_executable(whisper-rknn-tests
         cpp/src/audio_utils.cc
+        cpp/src/candidate.c
         cpp/src/file_utils.cc
         cpp/src/local_agreement.cc
         cpp/src/logger.cc
