@@ -59,21 +59,15 @@ std::string formatTokenIds(const std::vector<int>& tokenIds)
 }
 
 void logStreamingUpdate(
-    int iteration,
-    int firstFrame,
-    int endFrame,
     const LocalAgreementUpdate& update,
     const std::vector<VocabEntry>& vocab,
     bool decodeChinese)
 {
-    LOG(INFO) << std::fixed << std::setprecision(1) << "Streaming iteration " << iteration
-              << " (audio " << firstFrame / static_cast<double>(kSampleRate) << "-"
-              << endFrame / static_cast<double>(kSampleRate) << " seconds)";
-    LOG(INFO) << "Committed token IDs: " << formatTokenIds(update.committedTokens);
-    LOG(INFO) << "Committed text: "
+    LOG(INFO) << "  Committed token IDs: " << formatTokenIds(update.committedTokens);
+    LOG(INFO) << "  Committed text: "
               << renderTokens(update.committedTokens, vocab, decodeChinese);
-    LOG(INFO) << "Provisional token IDs: " << formatTokenIds(update.provisionalTokens);
-    LOG(INFO) << "Provisional text: "
+    LOG(INFO) << "  Provisional token IDs: " << formatTokenIds(update.provisionalTokens);
+    LOG(INFO) << "  Provisional text: "
               << renderTokens(update.provisionalTokens, vocab, decodeChinese);
 }
 
@@ -223,6 +217,10 @@ int main(int argc, char** argv)
         LocalAgreement agreement;
 
         while (endFrame > firstFrame) {
+            LOG(INFO) << std::fixed << std::setprecision(1) << "Processing audio segment #" << (iteration++) << " ("
+                      << firstFrame / static_cast<double>(kSampleRate) << "-"
+                      << endFrame / static_cast<double>(kSampleRate) << " seconds)";
+
             // Prepare the active audio segment for processing, excluding any context frames from the previous segment.
             AudioBuffer activeAudio = {
                 std::vector<float>(inputAudio.data.begin() + firstFrame, inputAudio.data.begin() + endFrame),
@@ -266,7 +264,7 @@ int main(int argc, char** argv)
 
             // Update the local agreement with the new candidate tokens
             const LocalAgreementUpdate update = agreement.update(candidate.tokenIds);
-            logStreamingUpdate(++iteration, firstFrame, endFrame, update, vocab, decodeChinese);
+            logStreamingUpdate(update, vocab, decodeChinese);
 
             // Update the committed end frame based on the new candidate and agreement update.
             // This is used to determine how much audio should be trimmed from the beginning of the input buffer.
