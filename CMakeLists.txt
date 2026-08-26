@@ -211,6 +211,7 @@ if(BUILD_TESTING)
         cpp/src/process.cc
         cpp/src/string_utils.cc
         cpp/tests/audio_utils_test.cc
+        cpp/tests/candidate_test.cc
         cpp/tests/file_utils_test.cc
         cpp/tests/local_agreement_test.cc
         cpp/tests/process_test.cc
