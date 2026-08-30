@@ -10,17 +10,18 @@
 
 ## Streaming
 
-- Investigate other streaming implementations
-  - [Whisper-Streaming](https://github.com/ufal/whisper_streaming)
-  - [SimulStreaming](https://github.com/ufal/SimulStreaming)
-- C++ implementation of streaming
-- RKNN native implementation of streaming
+- ~~Investigate other streaming implementations~~
+  - ~~[Whisper-Streaming](https://github.com/ufal/whisper_streaming)~~
+  - ~~[SimulStreaming](https://github.com/ufal/SimulStreaming)~~
+- ~~RKNN implementation of streaming~~
+- Vanilla C++ implementation of streaming
 
 ## Testing
 
 - ~~Print real-time factor stats~~
 - Sample wave files in different languages
 - Decoder loop stats
+- Evaluation scripts
 
 ## Conversion
 
