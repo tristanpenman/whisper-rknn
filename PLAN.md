@@ -16,6 +16,20 @@
 - ~~RKNN implementation of streaming~~
 - Vanilla C++ implementation of streaming
 
+## Fallbacks
+
+- Reimplement a local-agreement fallback for stalled streaming
+- Force-commit the latest hypothesis after ten seconds of buffered audio (capped by the model window)
+  - Advance and reset agreement
+  - Retain five-second updates and normal agreement by default
+- Handle empty hypotheses, boundary context loss, and end-of-input flushing without duplication
+- Fix alignment
+  - Preserve repeated phrases
+  - Avoid double-removing timestamped context
+  - Prevent unclosed segments from advancing audio trimming
+- Test fallback and window progression
+  - Document accuracy tradeoffs and validate both Docker builds and target-device transcription
+
 ## Testing
 
 - ~~Print real-time factor stats~~
